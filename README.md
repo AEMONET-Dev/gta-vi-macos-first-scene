@@ -7,6 +7,7 @@
 | 想看什么 | 入口 |
 | --- | --- |
 | 完整过程、试过的路线、失败的对照 | [按实验顺序阅读](PROCESS.md) |
+| 上游提交与讨论 | [第一幕画面和性能提案 #208](https://github.com/pragyaangaur/VIctory-macOS/issues/208) · [缓存修复 PR #205](https://github.com/pragyaangaur/VIctory-macOS/pull/205) |
 | 可浏览和下载的渲染器源码 | [整合版](https://github.com/AEMONET-Dev/gta-vi-macos-first-scene/tree/renderer-integration) · [画面实验版](https://github.com/AEMONET-Dev/gta-vi-macos-first-scene/tree/renderer-graphics) · [性能实验版](https://github.com/AEMONET-Dev/gta-vi-macos-first-scene/tree/renderer-performance) |
 | 从原始源码还原实验、运行离线核验 | [复现指南](REPRODUCE.md) |
 | 当时的记录与后续更正 | [画面](notebooks/team/Antigravity.md) · [性能](notebooks/team/Claude.md) · [整合与交叉核对](notebooks/team/Codex.md) |

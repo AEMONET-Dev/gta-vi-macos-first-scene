@@ -1,5 +1,7 @@
 # First-scene rendering and frame-time proposal for Apple Silicon
 
+The proposal is open for discussion in [VIctory-macOS issue #208](https://github.com/pragyaangaur/VIctory-macOS/issues/208).
+
 Our local VIctory renderer reaches the GTA VI opening street scene on an M5 Max. Faces and clothing are visible in sampled close-ups. Facial lighting, foliage and some mesh pipelines still need work. At 1080p with the Series S configuration, our instrumented picture baseline took 2,733 ms per delivered frame at the median and 4,195 ms at P95 over 23 intervals with diagnostic captures. The 30 FPS target gives us 33.3 ms per frame. The experimental branches build on an older VIctory-macOS revision. Our upstream comparison used `b6dd0b18`. [Study history](PROCESS.md)
 
 ## Picture
