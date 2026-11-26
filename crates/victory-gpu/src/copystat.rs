@@ -112,20 +112,69 @@ pub(crate) fn mode() -> u8 {
     })
 }
 
-/// Per source range (start, length): copies, bytes, microseconds, memory type.
+/// One counted copy: its source range's start and length, its
+/// microseconds, its memory kind. The dump sums the notes into one entry
+/// per source range (port of VIctory-macOS#193).
+type Note = (usize, usize, u64, u32);
+
+/// Per source range (start, length): copies, bytes, microseconds, memory
+/// type, what the dump sums a period of notes into.
 type Ranges = HashMap<(usize, usize), (u64, u64, u64, u32)>;
-static RANGES: Mutex<Option<Ranges>> = Mutex::new(None);
+
+/// Note lists. Each new thread that copies takes the next in turn, so the
+/// refresh workers each append to their own list: no copy waits on another
+/// thread's, and no copy pays a map visit. With more copying threads than
+/// lists, two share one.
+const SHARDS: usize = 16;
+static NOTES: [Mutex<Option<Vec<Note>>>; SHARDS] = [const { Mutex::new(None) }; SHARDS];
+
+thread_local! {
+    /// This thread's note list, as an index into `NOTES`.
+    static MINE: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+}
+
+/// This thread's note list, the next of `NOTES` for a new thread.
+fn mine() -> usize {
+    MINE.with(|mine| {
+        let mut at = mine.get();
+        if at == usize::MAX {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            at = NEXT.fetch_add(1, Relaxed) as usize % SHARDS;
+            mine.set(at);
+        }
+        at
+    })
+}
 
 /// A copy of `len` bytes from `src` (memory type `kind`) took `us`.
 pub(crate) fn range(src: usize, len: usize, us: u64, kind: u32) {
-    let mut map = RANGES.lock().unwrap_or_else(|e| e.into_inner());
-    let e = map
-        .get_or_insert_with(HashMap::new)
-        .entry((src, len))
-        .or_insert((0, 0, 0, kind));
-    e.0 += 1;
-    e.1 += len as u64;
-    e.2 += us;
+    NOTES[mine()]
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(Vec::new)
+        .push((src, len, us, kind));
+}
+
+/// Takes every thread's notes, summed: one entry per source range. The
+/// lists come out of their locks before summing, so a dump never makes a
+/// copy wait while it sums.
+fn merged() -> Ranges {
+    let mut taken: Vec<Vec<Note>> = Vec::with_capacity(SHARDS);
+    for notes in &NOTES {
+        if let Some(notes) = notes.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            taken.push(notes);
+        }
+    }
+    let mut all: Ranges = HashMap::new();
+    for notes in taken {
+        for (src, len, us, kind) in notes {
+            let e = all.entry((src, len)).or_insert((0, 0, 0, kind));
+            e.0 += 1;
+            e.1 += len as u64;
+            e.2 += us;
+        }
+    }
+    all
 }
 
 /// Snapshot bytes per host copy (its title start and length).
@@ -305,8 +354,7 @@ pub(crate) fn log(frames: f64) {
         .map(|((start, len), bytes)| format!("{start:#x}+{len:#x} {:.1} MB", *bytes as f64 / 1e6 / frames))
         .collect();
     tracing::info!("  snapshots per frame by copy: {}", snapshots.join(", "));
-    let ranges = RANGES.lock().unwrap_or_else(|e| e.into_inner()).take();
-    let mut ranges: Vec<_> = ranges.into_iter().flatten().collect();
+    let mut ranges: Vec<_> = merged().into_iter().collect();
     ranges.sort_by_key(|&(_, (_, bytes, _, _))| std::cmp::Reverse(bytes));
     for ((src, len), (n, bytes, us, _)) in ranges.into_iter().take(10) {
         use windows_sys::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery};
@@ -321,5 +369,73 @@ pub(crate) fn log(frames: f64) {
             bytes as f64 / 1e6 / frames,
             us as f64 / 1e3 / frames
         );
+    }
+}
+
+#[cfg(test)]
+mod note_tests {
+    use super::*;
+
+    /// One at a time: the tests share the note lists.
+    static SEQUENTIAL: Mutex<()> = Mutex::new(());
+
+    /// Copies on several threads count into their own lists, and the dump
+    /// sums them into one entry per range, as the single map did; a second
+    /// dump finds them taken (port of VIctory-macOS#193's tests).
+    #[test]
+    fn threads_count_into_one_dump() {
+        let _one = SEQUENTIAL.lock().unwrap_or_else(|e| e.into_inner());
+        std::thread::scope(|scope| {
+            for t in 0..4usize {
+                scope.spawn(move || {
+                    for _ in 0..250 {
+                        range(0x5200_0000_0000 + t * 0x1000, 0x100, 3, 0);
+                    }
+                    range(0x5300_0000_0000, 0x40, 5, 7);
+                });
+            }
+        });
+        let mut all = merged();
+        for t in 0..4usize {
+            assert_eq!(all.remove(&(0x5200_0000_0000 + t * 0x1000, 0x100)), Some((250, 250 * 0x100, 750, 0)));
+        }
+        assert_eq!(all.remove(&(0x5300_0000_0000, 0x40)), Some((4, 4 * 0x40, 20, 7)), "shared range summed across threads");
+        assert!(!merged().contains_key(&(0x5200_0000_0000, 0x100)), "the dump took the lists");
+    }
+
+    /// The per-copy cost the refresh workers pay, before (one global map)
+    /// and after (own list): 4 threads x 72,000 copies, about a frame's
+    /// 289k refresh jobs. Prints, asserts nothing timing-related.
+    #[test]
+    #[ignore = "benchmark"]
+    fn per_copy_cost() {
+        let _one = SEQUENTIAL.lock().unwrap_or_else(|e| e.into_inner());
+        static MAP: Mutex<Option<Ranges>> = Mutex::new(None);
+        let old = |src: usize, len: usize| {
+            let mut map = MAP.lock().unwrap_or_else(|e| e.into_inner());
+            let e = map.get_or_insert_with(HashMap::new).entry((src, len)).or_insert((0, 0, 0, 0));
+            e.0 += 1;
+            e.1 += len as u64;
+            e.2 += 7;
+        };
+        const PER: usize = 72_000;
+        for (name, new) in [("global map", false), ("own list", true)] {
+            let started = std::time::Instant::now();
+            std::thread::scope(|scope| {
+                for t in 0..4usize {
+                    scope.spawn(move || {
+                        for i in 0..PER {
+                            let src = 0x10_0000_0000 + ((i * 7919 + t * 31) % 200_000) * 0x1000;
+                            if new { range(src, 0x1000, 7, 0) } else { old(src, 0x1000) }
+                        }
+                    });
+                }
+            });
+            let wall = started.elapsed();
+            println!("{name}: {:.1} ms wall for 4 x {PER} copies ({:.0} ns per copy per thread)",
+                wall.as_secs_f64() * 1e3, wall.as_secs_f64() * 1e9 / PER as f64);
+            let _ = merged();
+            *MAP.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
     }
 }
