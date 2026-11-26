@@ -401,6 +401,13 @@ pub fn force_wave32_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("VICTORY_FORCE_WAVE32").as_deref() == Some(std::ffi::OsStr::new("1")))
 }
 
+/// Runs wave64 compute shaders in true 32-lane halves on 32-lane hosts
+/// (Apple Silicon), porting upstream `VIctory-macOS#180` (`lower::halves`).
+pub fn wave64_halves_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("VICTORY_WAVE64_HALVES").as_deref() == Some(std::ffi::OsStr::new("1")))
+}
+
 /// Coalesces split generic signature elements that share a hardware register
 /// row into one element per row (`VREG<row>`), avoiding Apple Metal's per-element
 /// struct alignment padding that pushes 128-vertex mesh shaders over 32,768 bytes.
@@ -607,6 +614,7 @@ pub fn emit_with(
         mesh_stride,
         view_marks: options.view_marks,
         atomic_locks: options.atomic_locks,
+        host_wave32: wave64_halves_enabled(),
     };
     // The console container identified in the live dispatch as ba578b59c8c28a57.
     // Its quad reductions and workgroup-shared memory also work with 32 lanes.

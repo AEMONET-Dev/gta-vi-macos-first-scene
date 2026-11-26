@@ -752,6 +752,7 @@ fn fmad_probe() -> Result<HostShader, crate::ShaderError> {
         prims: Vec::new(),
         mesh_stride: 0,
         atomic_locks: false,
+        host_wave32: false,
         view_marks: false,
     })?;
     Ok(HostShader {
