@@ -52,6 +52,8 @@ pub(super) fn copy(dst: *mut u8, src: *const u8, len: usize) {
                 *last = hi;
             } else if scratch.len() < MAX_HOLES {
                 scratch.push((lo, hi));
+            } else if scratch.len() == MAX_HOLES {
+                super::refresh_timing::capped();
             }
         };
         let mut walk = |lo: usize, hi: usize, query_first: bool| {

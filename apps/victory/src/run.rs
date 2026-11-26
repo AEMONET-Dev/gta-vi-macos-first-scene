@@ -80,6 +80,15 @@ pub fn run(
         image.base(),
         image.info().image_base
     );
+    // Masked stores redone as plain stores Rosetta can resume, so write
+    // tracking can run under Rosetta (experiment; off unless asked for).
+    let masked = victory_loader::masked::masked_stores(&prepared.info, &original);
+    println!("masked stores  {}", victory_loader::masked::summary(&masked));
+    if let Ok(which) = std::env::var("VICTORY_PATCH_MASKED") {
+        let wanted = victory_loader::masked::wanted_from(Some(&which));
+        let n = victory_loader::masked::patch(image.base() as u64, &prepared.info, &original, wanted);
+        println!("masked stores  {n} patched to plain stores");
+    }
     let resolver = HleResolver::new(if strict {
         HostPolicy::none()
     } else {
