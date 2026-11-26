@@ -266,6 +266,10 @@ struct Lower<'a> {
     flat: Option<V>,
     /// Mesh: IR blocks whose `s_barrier` is left out.
     no_barrier: HashSet<usize>,
+    /// Group barriers before these instructions (index = length: at the
+    /// block's end), for a one-wave group split across host waves
+    /// ([`split_wave_barriers`]).
+    split_barriers: HashSet<(usize, usize)>,
     /// Vertex and mesh outputs holding 16-bit values: row, whether two per
     /// dword ([`packed_half`]).
     half_outputs: HashMap<u8, bool>,
@@ -525,6 +529,7 @@ impl<'a> Lower<'a> {
             || insts().any(|i| i.name().starts_with("image_bvh"));
         let mut console_lanes = false;
         let (mut halves, mut halves_refused) = (false, None);
+        let mut split_barriers = HashSet::new();
         if let StageIo::Cs(cs) = x.native.io {
             s.threads = Some(cs.threads);
             s.lds_dwords = cs.lds_bytes() / 4;
@@ -566,7 +571,18 @@ impl<'a> Lower<'a> {
             let wave = if x.native.wave64 { 64 } else { 32 };
             let group = cs.threads.iter().product::<u32>();
             let one_wave = group <= wave;
-            let needs_wave = console_lanes || one_wave && s.lds_dwords > 0;
+            // When a one-wave wave64 group with LDS is split across 32-lane
+            // host waves, insert group barriers before LDS reads/atomics fed
+            // by prior writes (port of VIctory-macOS#148).
+            let mut synced = false;
+            if x.host_wave32 && one_wave && group > 32 && s.lds_dwords > 0 {
+                if let Some(b) = split_wave_barriers(p) {
+                    split_barriers = b;
+                    synced = true;
+                }
+            }
+            let fits = x.host_wave32 && (synced || group <= 32);
+            let needs_wave = console_lanes || one_wave && s.lds_dwords > 0 && !fits;
             halves = Self::halves_wanted(x, needs_wave);
             if halves && !super::force_wave32_enabled() {
                 halves_refused = Self::halves_lds(group, s.lds_dwords);
@@ -679,6 +695,7 @@ impl<'a> Lower<'a> {
             root_memory,
             flat: None,
             no_barrier,
+            split_barriers,
             half_outputs: half_outputs(&x.native.io),
             mask_data: match x.native.stage {
                 HwStage::Cs => MaskData::Console,
@@ -1353,6 +1370,9 @@ impl<'a> Lower<'a> {
                     self.s
                         .op(at, "discard", Attr::NoUnwind, self.s.t.void, 82, &[kill]);
                 }
+                if self.split_barriers.contains(&(b, i)) {
+                    self.group_barrier();
+                }
                 self.inst(b, i)?;
                 self.mode16 = round16_after(&p.blocks[b].insts[i], self.mode16);
                 if let Some(end) = self.sections.get(&b).and_then(|s| s.get(&i)).map(|s| s.end) {
@@ -1363,6 +1383,9 @@ impl<'a> Lower<'a> {
                     continue;
                 }
                 i += 1;
+            }
+            if self.split_barriers.contains(&(b, p.blocks[b].insts.len())) {
+                self.group_barrier();
             }
             self.mask_ok = self.mask_data == MaskData::Console;
             self.tail[b] = Some(self.cur);
@@ -3354,6 +3377,17 @@ impl<'a> Lower<'a> {
         Ok(())
     }
 
+    /// Thread-group sync with a shared-memory fence, and a UAV fence when
+    /// the program writes UAVs (the waits before an s_barrier make those
+    /// writes visible on the console).
+    fn group_barrier(&mut self) {
+        let mode = if self.writes_uavs { 1 | 2 | 8 } else { 1 | 8 };
+        let mode = self.s.m.i32(mode);
+        let void = self.s.t.void;
+        self.s
+            .op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
+    }
+
     // ---- instructions ----
 
     fn inst(&mut self, b: usize, i: usize) -> Result<(), Stop> {
@@ -3386,14 +3420,7 @@ impl<'a> Lower<'a> {
             Fields::Sop { .. } => self.sop(inst),
             Fields::Sopp { .. } if name == "s_barrier" && self.no_barrier.contains(&b) => Ok(()),
             Fields::Sopp { .. } if name == "s_barrier" => {
-                // Thread-group sync with a shared-memory fence, and a UAV
-                // fence when the program writes UAVs (the waits before an
-                // s_barrier make those writes visible on the console).
-                let mode = if self.writes_uavs { 1 | 2 | 8 } else { 1 | 8 };
-                let mode = self.s.m.i32(mode);
-                let void = self.s.t.void;
-                self.s
-                    .op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
+                self.group_barrier();
                 Ok(())
             }
             Fields::Sopp { .. } => Ok(()),
@@ -10500,6 +10527,71 @@ impl<'a> Lower<'a> {
             self.s.m.set_phi(v, incoming);
         }
         Ok(())
+    }
+}
+
+/// Where a compute group that is one console wave needs group barriers
+/// when the host splits it into narrower waves: (block, instruction) to
+/// sync before, instruction index = the block's length for its end.
+pub(crate) fn split_wave_barriers(p: &Program) -> Option<HashSet<(usize, usize)>> {
+    let n = p.blocks.len();
+    let succ = |b: usize| p.blocks[b].exit.successors();
+    let reach = |from: usize, start: bool, avoid: Option<usize>| {
+        let mut seen = vec![false; n];
+        let mut stack = if start { vec![from] } else { succ(from) };
+        while let Some(b) = stack.pop() {
+            if Some(b) == avoid || std::mem::replace(&mut seen[b], true) {
+                continue;
+            }
+            stack.extend(succ(b));
+        }
+        seen
+    };
+    let uniform: Vec<bool> = (0..n)
+        .map(|b| {
+            let ends_around = b != 0
+                && reach(0, true, Some(b))
+                    .iter()
+                    .enumerate()
+                    .any(|(q, &r)| r && succ(q).is_empty());
+            !reach(b, false, None)[b] && !ends_around
+        })
+        .collect();
+    let order = crate::ir::reverse_postorder(&p.blocks);
+    let mut dirty_out = vec![false; n];
+    loop {
+        let mut at = HashSet::new();
+        let mut changed = false;
+        for &b in &order {
+            let mut dirty = p.blocks[b].preds.iter().any(|&q| dirty_out[q]);
+            for (i, inst) in p.blocks[b].insts.iter().enumerate() {
+                let name = inst.name();
+                if name == "s_barrier" {
+                    dirty = false;
+                }
+                if !matches!(inst.fields, Fields::Ds { .. })
+                    || name.starts_with("ds_swizzle")
+                    || name.contains("permute")
+                {
+                    continue;
+                }
+                if dirty && !name.starts_with("ds_write") {
+                    if !uniform[b] {
+                        return None;
+                    }
+                    at.insert((b, i));
+                }
+                dirty = !name.starts_with("ds_read");
+            }
+            if dirty && uniform[b] && succ(b).iter().any(|&s| !uniform[s]) {
+                at.insert((b, p.blocks[b].insts.len()));
+                dirty = false;
+            }
+            changed |= std::mem::replace(&mut dirty_out[b], dirty) != dirty;
+        }
+        if !changed {
+            return Some(at);
+        }
     }
 }
 
