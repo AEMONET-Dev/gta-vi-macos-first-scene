@@ -1,0 +1,114 @@
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -5,6 +5,7 @@
+ //! overlap them with per-submission fences once more than clears run.
+ 
+ mod refresh;
++pub(crate) use refresh::merge_overlaps;
+ mod sparse;
+ pub(crate) mod upload_jobs;
+ 
+@@ -1920,7 +1921,10 @@
+                         // Arm the watched pages before further title writes.
+                         shadow.writing(*address, *len, true);
+                     } else {
+-                        batch.snapshots.push((shadow.clone(), *address, *len));
++                        batch.snapshots
++                            .entry(std::sync::Arc::as_ptr(shadow) as usize)
++                            .or_insert_with(|| (shadow.clone(), Vec::new()))
++                            .1.push((*address, address.saturating_add(*len)));
+                     }
+                     continue;
+                 }
+@@ -1992,7 +1996,7 @@
+     buffers: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, refresh::Ranges)>,
+     /// Unmarked shader writes across all lists. Snapshot the host buffer
+     /// after its final refresh, immediately before submitting it to the GPU.
+-    snapshots: Vec<(std::sync::Arc<crate::shadow::Shadow>, usize, usize)>,
++    snapshots: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, Vec<(usize, usize)>)>,
+     /// Buffers with requests since the last flush, in first-use order.
+     pending: Vec<usize>,
+     /// Reused while planning the copy runs for each pending buffer.
+@@ -2040,8 +2044,8 @@
+         // after an earlier write declaration used to patch its snapshot here.
+         #[cfg(feature = "diagnostics")]
+         let _timed = crate::watch::Timed(std::time::Instant::now(), crate::copystat::C::StepGpuWriteUs);
+-        for (shadow, address, len) in self.snapshots {
+-            shadow.writing(address, len, false);
++        for (shadow, mut ranges) in self.snapshots.into_values() {
++            shadow.snapshot_writes(&mut ranges);
+         }
+     }
+ 
+--- a/crates/victory-gpu/src/host/refresh.rs
++++ b/crates/victory-gpu/src/host/refresh.rs
+@@ -92,7 +92,7 @@
+     }
+ }
+ 
+-fn merge_overlaps(spans: &mut Vec<Span>) {
++pub(crate) fn merge_overlaps(spans: &mut Vec<Span>) {
+     if spans.len() < 2 {
+         return;
+     }
+--- a/crates/victory-gpu/src/shadow.rs
++++ b/crates/victory-gpu/src/shadow.rs
+@@ -281,6 +281,21 @@
+             t.arm(address, address + len);
+             return;
+         }
++        self.snapshot(address, len);
++    }
++
++    /// All unmarked ranges for this copy are known at the final submission
++    /// boundary. Keep the original declarations for their individual returns,
++    /// but sample their exact union once; gaps and other copies stay separate.
++    pub(crate) fn snapshot_writes(&self, ranges: &mut Vec<(usize, usize)>) {
++        self.pending.lock().unwrap_or_else(|e| e.into_inner()).extend(ranges.iter().copied());
++        crate::host::merge_overlaps(ranges);
++        for &(from, to) in ranges.iter() {
++            self.snapshot(from, to - from);
++        }
++    }
++
++    fn snapshot(&self, address: usize, len: usize) {
+         let (from, to) = self.inside(address, len);
+         if from >= to {
+             return;
+@@ -1139,6 +1154,36 @@
+         unregister(p, p as u64);
+     }
+ 
++    #[test]
++    fn batched_snapshots_keep_partial_alias_writes_and_exact_gaps() {
++        let (p, second) = crate::watch::tests::twin_views(2);
++        let len = 2 * PAGE;
++        register(p, p as u64, len as u64);
++        let copy = find(p as u64, len as u64).expect("test requires a host GPU");
++        copy.update(p, len);
++        let decl = [(p + 17, p + 60), (p + 11, p + 37), (p + 17, p + 60),
++                    (p + 60, p + 72), (p + PAGE + 3, p + PAGE + 6)];
++        let mut ranges = decl.to_vec();
++        copy.snapshot_writes(&mut ranges);
++        assert_eq!(ranges, [(p + 11, p + 72), (p + PAGE + 3, p + PAGE + 6)]);
++        let before = copy.before.lock().unwrap();
++        assert_eq!(before.0.iter().map(|(a,b)| (*a,b.len())).collect::<Vec<_>>(),
++                   [(11, 61), (PAGE + 3, 3)]);
++        drop(before);
++        // SAFETY: the second view of our two-page section.
++        unsafe { ((second + 33) as *mut u8).write_volatile(42) };
++        copy.write_host((p + 47) as u64, &[37]);
++        copy.write_host((p + 72) as u64, &[99]); // outside any writable range
++        copy.write_host((p + PAGE + 4) as u64, &[56]);
++        for &(a, b) in &[decl[4], decl[1], decl[3], decl[0]] {
++            copy.copy_back(a, b-a);
++        }
++        // SAFETY: all four bytes belong to the second, live view.
++        assert_eq!([33, 47, 72, PAGE + 4].map(|i| unsafe { ((second + i) as *const u8).read_volatile() }), [42, 37, 0, 56]);
++        assert!(copy.before.lock().unwrap().0.is_empty());
++        unregister(p, p as u64);
++    }
++
+     /// Pages shaders marked (`copy_back_marks`, `victory_shader::emit`
+     /// "Write marks") go back by the bytes the GPU changed. The title writes
+     /// a marked page after the copy took it (the guard saves its bytes from

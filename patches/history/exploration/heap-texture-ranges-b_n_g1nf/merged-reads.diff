@@ -1,0 +1,406 @@
+--- a/crates/victory-gpu/src/texture.rs
++++ b/crates/victory-gpu/src/texture.rs
+@@ -18,6 +18,8 @@
+ //! 0 is uploaded (every mip and array slice), depth and stencil planes are
+ //! not.
+ 
++mod heap_reads;
++
+ use std::sync::{Arc, Mutex};
+ 
+ use windows::Win32::Graphics::Direct3D12::*;
+@@ -238,18 +240,34 @@
+             return 0;
+         }
+         let started = std::time::Instant::now();
+-        let total: u64 = jobs.iter().map(|job| job.staging.layout.size).sum();
+-        let workers = if crate::watch::fault_tracking() {
+-            // Changing page protection is ordered with the tracked reads.
+-            1
+-        } else {
+-            texture_workers().min(jobs.len()).min((total / (8 << 20)).max(1) as usize)
+-        };
+-        let bytes = crate::host::upload_jobs::run(jobs, workers, |job| {
+-            let (size, changed) = job.staging.refresh_now();
++        let check = |index: usize, snapshot: Option<&[u8]>| {
++            let job = &jobs[index];
++            let (size, changed) = match snapshot {
++                Some(bytes) => job.staging.refresh_snapshot(bytes),
++                None => job.staging.refresh_now(),
++            };
+             job.changed.store(changed, Relaxed);
+             size
+-        });
++        };
++        let bytes = if crate::watch::fault_tracking() {
++            // Page protection changes and reads must stay ordered.
++            (0..jobs.len()).map(|i| check(i, None)).sum()
++        } else {
++            let mut ranges = Vec::with_capacity(jobs.len());
++            let mut total = 0usize;
++            for (job, upload) in jobs.iter().enumerate() {
++                let start = upload.staging.memory as usize;
++                let size = upload.staging.layout.size as usize;
++                // An invalid title range cannot produce a complete snapshot.
++                if size != 0 && let Some(end) = start.checked_add(size) {
++                    ranges.push(heap_reads::TextureRange { job, start, end });
++                    total = total.saturating_add(size);
++                }
++            }
++            let groups = heap_reads::groups(&mut ranges);
++            let workers = texture_workers().min((total / (8 << 20)).max(1));
++            crate::host::upload_jobs::run(&groups, workers, |g| heap_reads::check(g, &ranges, check))
++        };
+         let preparing = &crate::host::PREPARING;
+         preparing[2].fetch_add(started.elapsed().as_micros() as u64, Relaxed);
+         preparing[3].fetch_add(bytes as u64, Relaxed);
+@@ -372,16 +390,25 @@
+             );
+             return (0, false);
+         };
+-        // Compared with the bytes last detiled, which tracked memory keeps
+-        // as well. Hashing them instead ran at 0.45 GB/s under Wine on
+-        // Rosetta (blake3's AVX2 code, emulated), where no memory is
+-        // tracked: 30-250 ms per frame; the comparison runs at memory speed.
++        self.finish_untracked(&last.read, changed)
++    }
++
++    /// The heap reader already checked every page of this texture. Only
++    /// changed images need a private copy for the next submission.
++    fn refresh_snapshot(&self, tiled: &[u8]) -> (usize, bool) {
++        let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
++        let changed = save_changed(&mut last.read, tiled);
++        self.finish_untracked(&last.read, changed)
++    }
++
++    fn finish_untracked(&self, tiled: &[u8], changed: bool) -> (usize, bool) {
++        let size = tiled.len();
+         #[cfg(feature = "diagnostics")]
+         crate::copystat::add(crate::copystat::C::TexHashed, size as u64);
+         if !changed {
+             return (size, false);
+         }
+-        self.detile(&last.read);
++        self.detile(tiled);
+         #[cfg(feature = "diagnostics")]
+         crate::copystat::add(crate::copystat::C::TexChanged, size as u64);
+         (size, true)
+@@ -441,27 +468,69 @@
+     previous_tail == current_tail
+ }
+ 
+-/// Take a checked snapshot of the title mapping. Streaming can unmap a page
+-/// during the read. Keep the last complete image until a whole read succeeds.
++/// Only changed images acquire storage, sized for their own texels.
++fn save_changed(last: &mut Vec<u8>, bytes: &[u8]) -> bool {
++    if same_texels(last, bytes) {
++        return false;
++    }
++    last.clear();
++    last.extend_from_slice(bytes);
++    true
++}
++
++/// Take a checked snapshot of the title mapping. A failed read never
++/// replaces the last complete image. Worker capacity stays with the worker.
+ fn read_changed(last: &mut Vec<u8>, memory: *const u8, size: usize) -> Option<bool> {
+     use std::cell::RefCell;
+     thread_local! { static SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) }; }
++    (memory as usize).checked_add(size)?;
+     SCRATCH.with_borrow_mut(|scratch| {
++        if size > heap_reads::LIMIT {
++            return read_large(last, memory, size, scratch);
++        }
+         if scratch.len() < size {
+             scratch.resize(size, 0);
+         }
+-        if !crate::host::read_into(memory, &mut scratch[..size]) {
++        let bytes = &mut scratch[..size];
++        crate::host::read_into(memory, bytes).then(|| save_changed(last, bytes))
++    })
++}
++
++/// Stable large images only use a bounded comparison buffer. Allocate a new
++/// complete image on a real difference, after checking the full title range.
++/// The following kernel reads still check each piece if its mapping changes.
++fn read_large(last: &mut Vec<u8>, memory: *const u8, size: usize, scratch: &mut Vec<u8>) -> Option<bool> {
++    const CHUNK: usize = 1 << 20;
++    if scratch.len() < CHUNK {
++        scratch.resize(CHUNK, 0);
++    }
++    let mut replacement: Option<Vec<u8>> = None;
++    for start in (0..size).step_by(CHUNK) {
++        let len = (size - start).min(CHUNK);
++        let bytes = &mut scratch[..len];
++        if !crate::host::read_into(memory.wrapping_add(start), bytes) {
+             return None;
+         }
+-        if same_texels(last, &scratch[..size]) {
+-            return Some(false);
+-        }
+-        // This snapshot lives with one texture. A large temporary used by
+-        // an earlier job must never become a small texture's permanent buffer.
+-        last.clear();
+-        last.extend_from_slice(&scratch[..size]);
++        if replacement.is_none() && (last.len() != size || !same_texels(&last[start..start+len], bytes)) {
++            if !committed(memory, size) {
++                return None;
++            }
++            let mut image = Vec::new();
++            image.try_reserve_exact(size).ok()?;
++            // Earlier chunks matched their last complete versions.
++            image.extend_from_slice(&last[..start]);
++            replacement = Some(image);
++        }
++        if let Some(image) = replacement.as_mut() {
++            image.extend_from_slice(bytes);
++        }
++    }
++    if let Some(image) = replacement {
++        *last = image;
+         Some(true)
+-    })
++    } else {
++        Some(false)
++    }
+ }
+ 
+ /// Bytes available in the staging buffer for a subresource at `offset`.
+@@ -638,18 +707,6 @@
+         assert!(read_changed(&mut last, memory.as_ptr(), memory.len()).unwrap());
+         assert_eq!(last, memory);
+         assert!(!read_changed(&mut last, memory.as_ptr(), memory.len()).unwrap());
+-    }
+-
+-    #[test]
+-    fn small_snapshots_do_not_retain_a_large_workers_buffer() {
+-        let big = vec![5; 8 << 20];
+-        let small = [3; 4096];
+-        let mut previous = big.clone();
+-        assert_eq!(read_changed(&mut previous, big.as_ptr(), big.len()), Some(false));
+-        let mut snapshot = Vec::new();
+-        assert_eq!(read_changed(&mut snapshot, small.as_ptr(), small.len()), Some(true));
+-        assert_eq!(snapshot, small);
+-        assert!(snapshot.capacity() < 2 * small.len());
+     }
+ 
+     #[test]
+@@ -683,6 +740,58 @@
+     }
+ 
+     #[test]
++    fn small_texture_snapshots_never_inherit_a_large_workers_capacity() {
++        let large = vec![5u8; 3 << 20];
++        let small = [7u8; 128];
++        let mut first = Vec::new();
++        let mut second = Vec::new();
++        assert_eq!(read_changed(&mut first, large.as_ptr(), large.len()), Some(true));
++        assert_eq!(read_changed(&mut first, large.as_ptr(), large.len()), Some(false));
++        assert_eq!(read_changed(&mut second, small.as_ptr(), small.len()), Some(true));
++        assert!(second.capacity() < 1024);
++        assert_eq!(second, small);
++    }
++
++    #[test]
++    fn small_snapshots_do_not_retain_a_large_workers_buffer() {
++        let big = vec![5; 8 << 20];
++        let small = [3; 4096];
++        let mut previous = big.clone();
++        assert_eq!(read_changed(&mut previous, big.as_ptr(), big.len()), Some(false));
++        let mut snapshot = Vec::new();
++        assert_eq!(read_changed(&mut snapshot, small.as_ptr(), small.len()), Some(true));
++        assert_eq!(snapshot, small);
++        assert!(snapshot.capacity() < 2 * small.len());
++    }
++
++    #[test]
++    fn large_snapshot_checks_the_tail_and_preserves_previous_bytes_on_failure() {
++        use windows_sys::Win32::System::Memory::{
++            MEM_COMMIT, MEM_DECOMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
++        };
++        const SIZE: usize = (5 << 20) + 4096;
++        let mut last = Vec::new();
++        let mut scratch = Vec::new();
++        // SAFETY: the test owns the pages, and only writes to committed ones.
++        unsafe {
++            let at = VirtualAlloc(std::ptr::null(), SIZE, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE).cast::<u8>();
++            assert!(!at.is_null());
++            at.write_bytes(1, SIZE);
++            assert_eq!(read_large(&mut last, at, SIZE, &mut scratch), Some(true));
++            assert_eq!(read_large(&mut last, at, SIZE, &mut scratch), Some(false));
++            assert!(scratch.capacity() <= 1 << 20);
++            at.add(SIZE-1).write(92);
++            assert_eq!(read_large(&mut last, at, SIZE, &mut scratch), Some(true));
++            assert_eq!(last[SIZE-1], 92);
++            at.write(17);
++            assert_ne!(VirtualFree(at.add(SIZE-4096).cast(),4096,MEM_DECOMMIT),0);
++            assert_eq!(read_large(&mut last, at, SIZE, &mut scratch), None);
++            assert_eq!((last[0],last[SIZE-1]), (1,92));
++            assert_ne!(VirtualFree(at.cast(),0,MEM_RELEASE),0);
++        }
++    }
++
++    #[test]
+     fn committed_rejects_overflow_and_noaccess_pages() {
+         use windows_sys::Win32::System::Memory::{
+             MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_NOACCESS, PAGE_READWRITE, VirtualAlloc,
+--- /dev/null
++++ b/crates/victory-gpu/src/texture/heap_reads.rs
+@@ -0,0 +1,157 @@
++//! Join small untracked texture reads within one submitted heap. The ranges
++//! are planned anew each submission. Only complete, kernel-checked snapshots
++//! are passed to a texture, including when a gap has become unreadable.
++use std::cell::RefCell;
++use std::ops::Range;
++
++pub(super) struct TextureRange {
++    pub(super) job: usize,
++    pub(super) start: usize,
++    pub(super) end: usize,
++}
++
++pub(super) struct Group {
++    members: Range<usize>,
++    start: usize,
++    end: usize,
++}
++
++pub(super) const LIMIT: usize = 4 << 20;
++
++pub(super) fn groups(ranges: &mut [TextureRange]) -> Vec<Group> {
++    const MAX_GAP: usize = 4 << 10;
++    ranges.sort_unstable_by_key(|r| (r.start, r.end));
++    let mut result: Vec<Group> = Vec::new();
++    let mut padding = 0;
++    for (i, r) in ranges.iter().enumerate() {
++        if let Some(group) = result.last_mut() {
++            let gap = r.start.saturating_sub(group.end);
++            let end = group.end.max(r.end);
++            let bytes = end - group.start;
++            let unused = padding + gap;
++            if bytes <= LIMIT && gap <= MAX_GAP && unused <= (bytes - unused) / 4 {
++                group.members.end = i + 1;
++                group.end = end;
++                padding = unused;
++                continue;
++            }
++        }
++        result.push(Group { members: i..i + 1, start: r.start, end: r.end });
++        padding = 0;
++    }
++    result
++}
++
++/// Return the logical bytes checked. A singleton takes its usual path. A
++/// failed group discards even the readable prefix and retries each texture.
++pub(super) fn check(
++    group: &Group,
++    ranges: &[TextureRange],
++    mut accept: impl FnMut(usize, Option<&[u8]>) -> usize,
++) -> usize {
++    let members = &ranges[group.members.clone()];
++    if members.len() > 1 {
++        thread_local! { static BYTES: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) }; }
++        let checked = BYTES.with_borrow_mut(|buf| {
++            let size = group.end - group.start;
++            if buf.len() < size {
++                buf.resize(size, 0);
++            }
++            if !crate::host::read_into(group.start as *const u8, &mut buf[..size]) {
++                return None;
++            }
++            Some(members.iter().map(|r| {
++                let snapshot = &buf[r.start - group.start..r.end - group.start];
++                accept(r.job, Some(snapshot))
++            }).sum())
++        });
++        if let Some(bytes) = checked {
++            return bytes;
++        }
++    }
++    members.iter().map(|r| accept(r.job, None)).sum()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn overlaps_do_not_inflate_the_gap_budget_and_large_textures_stay_whole() {
++        const M: usize = 1 << 20;
++        let mut ranges: Vec<_> = [
++            (320, 420), (0, 100), (120, 220), (0, 100), (255, 355),
++            (M, 3 * M), (3 * M, 5 * M), (5 * M, 5 * M + 1),
++            (10 * M, 16 * M), (16 * M + 1, 16 * M + 2),
++        ].into_iter().enumerate().map(|(job, (start, end))| TextureRange { job, start, end }).collect();
++        let planned = groups(&mut ranges);
++        let bounds: Vec<_> = planned.iter().map(|g| (g.start, g.end)).collect();
++        assert_eq!(bounds, [(0, 420), (M, 5 * M), (5 * M, 5 * M + 1),
++            (10 * M, 16 * M), (16 * M + 1, 16 * M + 2)]);
++
++        let mut duplicates: Vec<_> = [(0, 100), (0, 100), (151, 251)]
++            .into_iter().enumerate().map(|(job, (start, end))| TextureRange { job, start, end }).collect();
++        assert_eq!(groups(&mut duplicates).len(), 2);
++        let mut wide: Vec<_> = [(0, M), (M + 4097, M * 2)]
++            .into_iter().enumerate().map(|(job, (start, end))| TextureRange { job, start, end }).collect();
++        assert_eq!(groups(&mut wide).len(), 2);
++    }
++
++    #[test]
++    fn overlapping_textures_retry_individually_when_streamed_pages_disappear() {
++        use windows_sys::Win32::System::Memory::{
++            MEM_COMMIT, MEM_DECOMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
++            VirtualAlloc, VirtualFree,
++        };
++        const P: usize = 4096;
++        let locations = [(7, 10), (1, 3), (5, 6), (0, 5)];
++        let mut previous = vec![Vec::new(); locations.len()];
++        // SAFETY: the test owns ten pages. Only checked reads touch holes.
++        unsafe {
++            let base = VirtualAlloc(std::ptr::null(), 10*P, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE).cast::<u8>();
++            assert!(!base.is_null());
++            for i in 0..10 { base.add(i*P).write_bytes(i as u8, P); }
++            let mut ranges: Vec<_> = locations.iter().enumerate().map(|(job, &(a, b))|
++                TextureRange { job, start: base as usize + a*P, end: base as usize + b*P }
++            ).collect();
++            let planned = groups(&mut ranges);
++            assert_eq!(planned.len(), 1);
++            let mut refresh = |wanted: &[usize], fallbacks| {
++                let mut changed = Vec::new();
++                let mut single = 0;
++                check(&planned[0], &ranges, |job, snapshot| {
++                    let (from, to) = locations[job];
++                    let size = (to-from)*P;
++                    let update = if let Some(bytes) = snapshot {
++                        assert_eq!(bytes.len(), size);
++                        let changed = previous[job] != bytes;
++                        previous[job] = bytes.to_vec();
++                        changed
++                    } else {
++                        single += 1;
++                        super::super::read_changed(&mut previous[job], base.add(from*P), size).unwrap_or(false)
++                    };
++                    if update { changed.push(job); }
++                    size
++                });
++                changed.sort_unstable();
++                assert_eq!(changed, wanted);
++                assert_eq!(single, fallbacks);
++            };
++            refresh(&[0,1,2,3], 0);
++            refresh(&[], 0);
++            // Page 6 lies in unused padding. Other textures must still update.
++            assert_ne!(VirtualFree(base.add(6*P).cast(), P, MEM_DECOMMIT), 0);
++            base.add(P + 16).write(46);
++            refresh(&[1,3],4);
++            assert_ne!(VirtualFree(base.add(5*P).cast(), P, MEM_DECOMMIT), 0);
++            base.add(9*P).write(47);
++            refresh(&[0],4);
++            assert_eq!(VirtualAlloc(base.add(5*P).cast(),2*P,MEM_COMMIT,PAGE_READWRITE),base.add(5*P).cast());
++            base.add(5*P).write(48);
++            refresh(&[2],0);
++            refresh(&[],0);
++            assert_ne!(VirtualFree(base.cast(), 0, MEM_RELEASE),0);
++        }
++    }
++}

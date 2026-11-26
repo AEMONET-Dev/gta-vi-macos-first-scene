@@ -1,0 +1,201 @@
+--- a/crates/victory-formats/src/texture.rs
++++ b/crates/victory-formats/src/texture.rs
+@@ -608,10 +608,22 @@
+         self.mips.get(mip as usize).map_or(0, |m| m.depth)
+     }
+ 
+-    /// Copies one subresource out of tiled memory (the whole texture,
+-    /// [`Layout::size`] bytes) into linear rows: mip `mip` of array slice
+-    /// `slice` (3D: every depth slice of the mip, `slice` 0). Rows are
+-    /// `row_pitch` bytes apart, depth slices `depth_pitch`.
++    /// End of the resident bytes for a chain starting at `first`. A single
++    /// 2D slice packs large mips after small mips. Tail levels share a block.
++    /// For other shapes only a complete texture is accepted.
++    pub fn mip_chain_prefix(&self, first: u32) -> u64 {
++        if first == 0 || self.slices != 1 || self.desc.dimension != Dimension::Tex2d {
++            return self.size;
++        }
++        let index = first.min(self.first_tail_mip);
++        index.checked_sub(1)
++            .and_then(|i| self.mips.get(i as usize))
++            .map_or(self.size, |mip| if mip.offset > 0 { mip.offset } else { self.size })
++    }
++
++    /// Copies a mip of a texture into linear rows. A single 2D texture needs
++    /// only the prefix through that mip; other shapes require the full layout.
++    /// Rows are `row_pitch` bytes apart, depth slices `depth_pitch` bytes.
+     pub fn detile(
+         &self,
+         tiled: &[u8],
+@@ -622,7 +634,7 @@
+         depth_pitch: usize,
+     ) -> Result<(), Error> {
+         self.walk(
+-            tiled.len(),
++            tiled.len() as u64 >= self.size || tiled.len() as u64 >= self.mip_chain_prefix(mip),
+             mip,
+             slice,
+             linear.len(),
+@@ -645,7 +657,7 @@
+         depth_pitch: usize,
+     ) -> Result<(), Error> {
+         self.walk(
+-            tiled.len(),
++            tiled.len() as u64 >= self.size,
+             mip,
+             slice,
+             linear.len(),
+@@ -661,7 +673,7 @@
+     #[allow(clippy::too_many_arguments)]
+     fn walk(
+         &self,
+-        tiled_len: usize,
++        tiled_available: bool,
+         mip: u32,
+         slice: u32,
+         linear_len: usize,
+@@ -701,7 +713,7 @@
+             .checked_mul(depth_pitch)
+             .and_then(|offset| offset.checked_add(slice_bytes))
+             .ok_or(Error::TooSmall)?;
+-        if tiled_len < self.size as usize || linear_len < need || row_pitch < bytes {
++        if !tiled_available || linear_len < need || row_pitch < bytes {
+             return Err(Error::TooSmall);
+         }
+         let linear = self.desc.swizzle == Swizzle::LINEAR;
+--- a/crates/victory-gpu/src/texture.rs
++++ b/crates/victory-gpu/src/texture.rs
+@@ -400,7 +400,7 @@
+                 if let Some((first, bytes)) = self.resident_levels(available) {
+                     if let Some(changed) = read_changed(&mut last.read, self.memory, bytes) {
+                         if changed {
+-                            self.detile_prefix(&last.read, first);
++                            self.detile_from(&last.read, first);
+                             #[cfg(feature = "diagnostics")]
+                             if crate::switch::on("VICTORY_MATERIAL_INPUTS") {
+                                 static RECOVERED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+@@ -418,7 +418,7 @@
+                 static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                 let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                 if n < 10 || n.is_power_of_two() {
+-                    let readable = (1..self.mips).find(|&k| committed(self.memory, readable_bytes(&self.layout, k) as usize));
++                    let readable = (1..self.mips).find(|&k| committed(self.memory, self.layout.mip_chain_prefix(k) as usize));
+                     tracing::info!(?self.memory, size, ?self.layout.desc, self.first, ?readable, n, "material upload skipped unreadable layout");
+                 }
+             }
+@@ -449,7 +449,7 @@
+         if !changed {
+             return (size, false);
+         }
+-        self.detile_prefix(tiled, self.first);
++        self.detile_from(tiled, self.first);
+         #[cfg(feature = "diagnostics")]
+         crate::copystat::add(crate::copystat::C::TexChanged, size as u64);
+         (size, true)
+@@ -457,21 +457,9 @@
+ 
+     fn resident_levels(&self, available: usize) -> Option<(u32, usize)> {
+         (self.first + 1..self.mips).find_map(|k| {
+-            let bytes = readable_bytes(&self.layout, k) as usize;
++            let bytes = self.layout.mip_chain_prefix(k) as usize;
+             (bytes > 0 && bytes <= available).then_some((k, bytes))
+         })
+-    }
+-
+-    fn detile_prefix(&self, tiled: &[u8], first: u32) {
+-        if tiled.len() == self.layout.size as usize {
+-            self.detile_from(tiled, first);
+-        } else {
+-            // Layout::detile validates the whole allocation. Only resident
+-            // subresources are written; previously uploaded finer mips survive.
+-            let mut full = vec![0; self.layout.size as usize];
+-            full[..tiled.len()].copy_from_slice(tiled);
+-            self.detile_from(&full, first);
+-        }
+     }
+ 
+     /// Detiles `tiled` (the texture's memory) into the staging buffer.
+@@ -704,21 +692,6 @@
+     read_from.min(mips.saturating_sub(1))
+ }
+ 
+-/// The bytes at the start of a single texture's memory that hold its levels
+-/// from `first` on: the levels are stored smallest first (the mip tail,
+-/// then each larger level), so they end where level `first - 1` begins,
+-/// or where the tail ends when `first` lies in the tail.
+-fn readable_bytes(layout: &victory_formats::texture::Layout, first: u32) -> u64 {
+-    if first == 0 || layout.slices != 1 {
+-        return layout.size;
+-    }
+-    let k = first.min(layout.first_tail_mip) as usize;
+-    match k.checked_sub(1).and_then(|k| layout.mips.get(k)) {
+-        Some(next) if next.offset > 0 => next.offset,
+-        _ => layout.size,
+-    }
+-}
+-
+ /// The staging state of a title texture's host texture, made on first use
+ /// (one for all title textures of its memory).
+ fn staging(resource: This, texture: &ID3D12Resource) -> Option<Arc<Staging>> {
+@@ -780,7 +753,7 @@
+     );
+     // Watched by 64 KiB pages: a write in the last page the levels read
+     // share with what follows them still uploads them again (only them).
+-    let prefix = readable_bytes(&layout, first) as usize;
++    let prefix = layout.mip_chain_prefix(first) as usize;
+     if first > 0 {
+         if crate::switch::on("VICTORY_MATERIAL_INPUTS") && committed(memory, prefix)
+             && !committed(memory, layout.size as usize)
+@@ -858,8 +831,8 @@
+             "{}",
+             l.first_tail_mip
+         );
+-        assert_eq!(readable_bytes(&l, 0), l.size);
+-        let prefixes: Vec<u64> = (0..12).map(|first| readable_bytes(&l, first)).collect();
++        assert_eq!(l.mip_chain_prefix(0), l.size);
++        let prefixes: Vec<u64> = (0..12).map(|first| l.mip_chain_prefix(first)).collect();
+         for pair in prefixes.windows(2) {
+             assert!(
+                 pair[1] <= pair[0],
+@@ -868,7 +841,7 @@
+         }
+         // Each level on lies inside its prefix, and none before it does.
+         for first in 1..l.first_tail_mip {
+-            let end = readable_bytes(&l, first);
++            let end = l.mip_chain_prefix(first);
+             let m = &l.mips[first as usize];
+             assert!(m.offset < end, "level {first} in its prefix");
+             assert!(
+@@ -878,11 +851,11 @@
+             );
+         }
+         // From a level in the tail on: the tail block alone, the same for all.
+-        let tail = readable_bytes(&l, l.first_tail_mip);
+-        assert_eq!(readable_bytes(&l, 11), tail);
++        let tail = l.mip_chain_prefix(l.first_tail_mip);
++        assert_eq!(l.mip_chain_prefix(11), tail);
+         assert!(tail < l.size / 64, "a tail of {tail} bytes");
+         // Level 1 on is about a quarter of the memory.
+-        let one = readable_bytes(&l, 1);
++        let one = l.mip_chain_prefix(1);
+         assert!(one * 3 < l.size && one * 5 > l.size, "{one} of {}", l.size);
+     }
+ 
+@@ -953,7 +926,7 @@
+         let copy = crate::resource::host_copy(r).expect("a host copy");
+         let s = staging(r, &copy.texture).expect("its staging");
+         assert_eq!(s.first, 3);
+-        assert_eq!(s.prefix as u64, readable_bytes(&s.layout, 3));
++        assert_eq!(s.prefix as u64, s.layout.mip_chain_prefix(3));
+         assert!(
+             s.prefix * 16 < s.layout.size as usize,
+             "{} of {}",
+@@ -1001,7 +974,7 @@
+             let copy = crate::resource::host_copy(r).unwrap();
+             let s = staging(r, &copy.texture).unwrap();
+             let full = s.layout.size as usize;
+-            let prefix = readable_bytes(&s.layout, 1) as usize;
++            let prefix = s.layout.mip_chain_prefix(1) as usize;
+             assert!(s.tracked.is_none() && prefix < full && full <= REGION);
+             assert!(prefix.is_multiple_of(4096));
+             let byte = |mip:usize| s.data.add(s.footprints[mip].Offset as usize).read_volatile();

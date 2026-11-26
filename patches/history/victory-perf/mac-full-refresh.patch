@@ -1,0 +1,164 @@
+diff --git a/crates/victory-gpu/src/watch.rs b/crates/victory-gpu/src/watch.rs
+--- a/crates/victory-gpu/src/watch.rs
++++ b/crates/victory-gpu/src/watch.rs
+@@ -24,7 +24,49 @@
+ //! system call writing into a guarded block fails (none is known to).
+ 
+ use std::collections::{BTreeMap, BTreeSet};
+-use std::sync::{Mutex, RwLock};
++use std::sync::{LazyLock, Mutex, RwLock};
++
++pub fn fault_tracking() -> bool {
++    static ON: LazyLock<bool> = LazyLock::new(|| {
++        decide(
++            std::env::var("VICTORY_FAULT_TRACKING").ok().as_deref(),
++            cfg!(test) || !rosetta(),
++        )
++    });
++    *ON
++}
++
++/// `fault_tracking` from the variable's value and the default.
++fn decide(var: Option<&str>, default: bool) -> bool {
++    match var {
++        Some("1") => true,
++        Some("0") => false,
++        _ => default,
++    }
++}
++
++/// Whether x86-64 code here runs under Rosetta: Wine on macOS, whose
++/// x86-64 Wine only runs that way on the Apple silicon Macs D3DMetal needs.
++fn rosetta() -> bool {
++    use std::ffi::{CStr, c_char};
++    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
++    type HostVersion = unsafe extern "C" fn(*mut *const c_char, *mut *const c_char);
++    // SAFETY: ntdll is always loaded and both names end with a NUL. Wine's
++    // `wine_get_host_version` (cdecl, two out pointers) sets them to static
++    // strings: the host's `uname` system name and release.
++    unsafe {
++        let Some(f) = GetProcAddress(
++            GetModuleHandleA(c"ntdll.dll".as_ptr().cast()),
++            c"wine_get_host_version".as_ptr().cast(),
++        ) else {
++            return false;
++        };
++        let f: HostVersion = std::mem::transmute(f);
++        let (mut sysname, mut release) = (std::ptr::null(), std::ptr::null());
++        f(&mut sysname, &mut release);
++        !sysname.is_null() && CStr::from_ptr(sysname) == c"Darwin"
++    }
++}
+ 
+ /// The unit tracked and copied: 64 KiB, the console's page (the kernel's
+ /// 4 KiB pages fold into it). Finer units made the checks of the world's
+@@ -80,6 +122,7 @@
+ /// 456 ms, in run 14). Ranges that are not write-watched, or lie alone, are
+ /// left to `writes`.
+ pub(crate) fn ask_ahead(ranges: &[(usize, usize)]) {
++    if !fault_tracking() { return; }
+     let mut pieces: Vec<(usize, usize)> = ranges
+         .iter()
+         .filter(|r| r.0 < r.1)
+@@ -176,6 +219,7 @@
+ /// refresh) as [`ask_ahead`] does, and lets that asking stand until
+ /// [`ask_once_end`].
+ pub(crate) fn ask_once(ranges: &[(usize, usize)]) {
++    if !fault_tracking() { return; }
+     if !once() {
+         return;
+     }
+@@ -292,6 +336,7 @@
+ /// written, with the number of the asking that stands (as [`writes`] gives
+ /// it). `None` if the kernel would have to be asked.
+ pub(crate) fn asked(start: usize, end: usize) -> Option<(u64, Vec<(usize, u64)>)> {
++    if !fault_tracking() { return None; }
+     let (first, last) = (start / PAGE, end.div_ceil(PAGE));
+     let j = JOURNAL.read().unwrap_or_else(|e| e.into_inner());
+     j.ahead
+@@ -322,6 +367,7 @@
+ /// Direct path for memory already known to be view-guarded: skips the failing
+ /// `GetWriteWatch` kernel syscall and runs `guard()` without holding `JOURNAL`.
+ pub(crate) fn writes_guarded(start: usize, end: usize) -> Option<(u64, Vec<(usize, u64)>)> {
++    if !fault_tracking() { return None; }
+     let (first, last) = (start / PAGE, end.div_ceil(PAGE));
+     #[cfg(feature = "diagnostics")]
+     let guarding = std::time::Instant::now();
+@@ -336,6 +382,7 @@
+ /// (`true`) so callers can cache that fact and skip future `GetWriteWatch`
+ /// syscalls via [`writes_guarded`].
+ pub(crate) fn writes_kind(start: usize, end: usize, guarded: bool) -> Option<(u64, Vec<(usize, u64)>, bool)> {
++    if !fault_tracking() { return None; }
+     use windows_sys::Win32::System::Memory::GetWriteWatch;
+     const WRITE_WATCH_FLAG_RESET: u32 = 1;
+     let (first, last) = (start / PAGE, end.div_ceil(PAGE));
+@@ -621,6 +668,7 @@
+ /// Whether all the views of a guarded page are guarded together
+ /// (`VICTORY_VIEW_GUARD`).
+ fn view_guard() -> bool {
++    if !fault_tracking() { return false; }
+     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+     *ON.get_or_init(|| std::env::var_os("VICTORY_VIEW_GUARD").is_none_or(|v| v != "0"))
+ }
+diff --git a/crates/victory-gpu/src/lib.rs b/crates/victory-gpu/src/lib.rs
+--- a/crates/victory-gpu/src/lib.rs
++++ b/crates/victory-gpu/src/lib.rs
+@@ -72,6 +72,7 @@
+ pub use inplace::{title_memory_freeing, title_memory_section, title_memory_view};
+ #[cfg(windows)]
+ pub use watch::{
++    fault_tracking,
+     title_memory_reading, title_memory_remapped, title_memory_remapping,
+     writing as kernel_will_write,
+ };
+diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
+--- a/crates/victory-gpu/src/draw.rs
++++ b/crates/victory-gpu/src/draw.rs
+@@ -1467,7 +1467,7 @@
+         // of one frame is seen a frame late.
+         static FRAME: AtomicU64 = AtomicU64::new(u64::MAX);
+         let frame = crate::frame::current();
+-        if FRAME.swap(frame, Ordering::Relaxed) == frame {
++        if crate::fault_tracking() && FRAME.swap(frame, Ordering::Relaxed) == frame {
+             return Some(gpu);
+         }
+         let started = std::time::Instant::now();
+@@ -1637,7 +1637,7 @@
+         let mut whole = WHOLE.lock().unwrap_or_else(|e| e.into_inner());
+         let whole = whole.get_or_insert_with(Default::default);
+         for (shadow, from, to) in spans.values() {
+-            if shadow.unwatched() {
++            if crate::fault_tracking() && shadow.unwatched() {
+                 // By the copy's number: a copy made where one let go was
+                 // (`shadow::let_go_idle`) has never been refreshed.
+                 let key = shadow.id() as usize;
+diff --git a/crates/victory-gpu/src/texture.rs b/crates/victory-gpu/src/texture.rs
+--- a/crates/victory-gpu/src/texture.rs
++++ b/crates/victory-gpu/src/texture.rs
+@@ -713,6 +713,14 @@
+         let start = self.memory as usize;
+         let mut last = waited(0, || self.last.lock().unwrap_or_else(|e| e.into_inner()));
+         let last = &mut *last;
++        if !crate::fault_tracking() {
++            let _mapped = crate::watch::title_memory_reading();
++            with_read(size, |read| {
++                crate::host::copy_mapped(read.as_mut_ptr(), self.memory, size, false);
++                self.detile(read);
++            });
++            return size;
++        }
+         if let Some((now, written)) = waited(1, || crate::watch::writes(start, start + size, false)) {
+             if last.asked != 0 && written.iter().all(|&(_, w)| w <= last.asked) {
+                 return 0;
+diff --git a/crates/victory-hle/src/modules/xmem.rs b/crates/victory-hle/src/modules/xmem.rs
+--- a/crates/victory-hle/src/modules/xmem.rs
++++ b/crates/victory-hle/src/modules/xmem.rs
+@@ -132,7 +132,7 @@
+         // The GPU side copies only the pages the title wrote since its last
+         // copy (`victory_gpu`, decision 0007); placeholders cannot be
+         // watched (their physical-page views are copied whole).
+-        if kind & MEM_RESERVE_PLACEHOLDER == 0 {
++        if kind & MEM_RESERVE_PLACEHOLDER == 0 && victory_gpu::fault_tracking() {
+             kind |= MEM_WRITE_WATCH;
+         }
+     }

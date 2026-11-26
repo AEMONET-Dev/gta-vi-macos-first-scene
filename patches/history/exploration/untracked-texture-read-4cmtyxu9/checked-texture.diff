@@ -1,0 +1,122 @@
+--- a/crates/victory-gpu/src/texture.rs
++++ b/crates/victory-gpu/src/texture.rs
+@@ -357,7 +357,7 @@
+             crate::copystat::add(crate::copystat::C::TexWatched, size as u64);
+             return (size, true);
+         }
+-        if !committed(self.memory, size) {
++        let Some(changed) = read_changed(&mut last.read, self.memory, size) else {
+             #[cfg(feature = "diagnostics")]
+             tracing::debug!(
+                 memory = ?self.memory,
+@@ -366,16 +366,14 @@
+                 "a sampled texture's memory is not committed"
+             );
+             return (0, false);
+-        }
+-        // SAFETY: committed memory of the texture's layout size.
+-        let tiled = unsafe { std::slice::from_raw_parts(self.memory, size) };
++        };
+         // Compared with the bytes last detiled, which tracked memory keeps
+         // as well. Hashing them instead ran at 0.45 GB/s under Wine on
+         // Rosetta (blake3's AVX2 code, emulated), where no memory is
+         // tracked: 30-250 ms per frame; the comparison runs at memory speed.
+         #[cfg(feature = "diagnostics")]
+         crate::copystat::add(crate::copystat::C::TexHashed, size as u64);
+-        if !take_changed(&mut last.read, tiled) {
++        if !changed {
+             return (size, false);
+         }
+         self.detile(&last.read);
+@@ -438,15 +436,25 @@
+     previous_tail == current_tail
+ }
+ 
+-/// Whether `memory` differs from `last`, the bytes last detiled, which then
+-/// take its bytes.
+-fn take_changed(last: &mut Vec<u8>, memory: &[u8]) -> bool {
+-    if same_texels(last, memory) {
+-        return false;
+-    }
+-    last.clear();
+-    last.extend_from_slice(memory);
+-    true
++/// Take a checked snapshot of the title mapping. Streaming can unmap a page
++/// during the read. Keep the last complete image until a whole read succeeds.
++fn read_changed(last: &mut Vec<u8>, memory: *const u8, size: usize) -> Option<bool> {
++    use std::cell::RefCell;
++    thread_local! { static SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) }; }
++    SCRATCH.with_borrow_mut(|scratch| {
++        if scratch.len() < size {
++            scratch.resize(size, 0);
++        }
++        if !crate::host::read_into(memory, &mut scratch[..size]) {
++            return None;
++        }
++        if same_texels(last, &scratch[..size]) {
++            return Some(false);
++        }
++        scratch.truncate(size);
++        std::mem::swap(last, scratch);
++        Some(true)
++    })
+ }
+ 
+ /// Bytes available in the staging buffer for a subresource at `offset`.
+@@ -585,7 +593,8 @@
+                 jobs[40].0[0] ^= 1;
+             }
+             let total = crate::host::upload_jobs::run(&jobs, 4, |(memory, previous, changed)| {
+-                changed.store(take_changed(&mut previous.lock().unwrap(), memory), Relaxed);
++                let update = read_changed(&mut previous.lock().unwrap(), memory.as_ptr(), memory.len());
++                changed.store(update.unwrap(), Relaxed);
+                 memory.len()
+             });
+             assert_eq!(total, jobs.iter().map(|j| j.0.len()).sum::<usize>());
+@@ -616,12 +625,42 @@
+     fn untracked_memory_reads_as_changed_once_per_change() {
+         let mut last = Vec::new();
+         let mut memory = vec![1u8; 4096];
+-        assert!(take_changed(&mut last, &memory), "never detiled");
+-        assert!(!take_changed(&mut last, &memory));
++        assert!(read_changed(&mut last, memory.as_ptr(), memory.len()).unwrap(), "never detiled");
++        assert!(!read_changed(&mut last, memory.as_ptr(), memory.len()).unwrap());
+         memory[4095] = 2;
+-        assert!(take_changed(&mut last, &memory));
++        assert!(read_changed(&mut last, memory.as_ptr(), memory.len()).unwrap());
+         assert_eq!(last, memory);
+-        assert!(!take_changed(&mut last, &memory));
++        assert!(!read_changed(&mut last, memory.as_ptr(), memory.len()).unwrap());
++    }
++
++    #[test]
++    fn unreadable_texture_pages_preserve_the_last_complete_snapshot() {
++        use windows_sys::Win32::System::Memory::{
++            MEM_COMMIT, MEM_DECOMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
++            VirtualAlloc, VirtualFree,
++        };
++        const PAGE: usize = 4096;
++        let mut last = Vec::new();
++        // SAFETY: both pages belong to this test. Only the checked reader
++        // touches the second page while it is decommitted.
++        unsafe {
++            let base = VirtualAlloc(std::ptr::null(), 2 * PAGE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE).cast::<u8>();
++            assert!(!base.is_null());
++            base.write_bytes(7, 2 * PAGE);
++            assert_eq!(read_changed(&mut last, base, 2 * PAGE), Some(true));
++            let tail = base.add(PAGE);
++            assert_ne!(VirtualFree(tail.cast(), PAGE, MEM_DECOMMIT), 0);
++            base.write_bytes(9, PAGE);
++            assert_eq!(read_changed(&mut last, base, 2 * PAGE), None);
++            assert_eq!(last, vec![7; 2 * PAGE]);
++            assert_eq!(VirtualAlloc(tail.cast(), PAGE, MEM_COMMIT, PAGE_READWRITE), tail.cast());
++            tail.write_bytes(2, PAGE);
++            assert_eq!(read_changed(&mut last, base, 2 * PAGE), Some(true));
++            assert!(last[..PAGE].iter().all(|&b| b == 9));
++            assert!(last[PAGE..].iter().all(|&b| b == 2));
++            assert_eq!(read_changed(&mut last, base, 2 * PAGE), Some(false));
++            assert_ne!(VirtualFree(base.cast(), 0, MEM_RELEASE), 0);
++        }
+     }
+ 
+     #[test]

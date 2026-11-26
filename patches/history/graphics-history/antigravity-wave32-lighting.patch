@@ -1,0 +1,31 @@
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index 6c08d75..5c6a560 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -552,7 +552,7 @@ impl<'a> Lower<'a> {
+             let wave = if x.native.wave64 { 64 } else { 32 };
+             let one_wave = cs.threads.iter().product::<u32>() <= wave;
+             if console_lanes || one_wave && s.lds_dwords > 0 {
+-                s.wave_size = Some(if spd_wave32 { 32 } else { wave });
++                s.wave_size = Some(if spd_wave32 || super::force_wave32_enabled() { 32 } else { wave });
+             }
+         }
+         let mut no_barrier = HashSet::new();
+diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
+index 5287a43..f9b9d23 100644
+--- a/crates/victory-shader/src/emit/mod.rs
++++ b/crates/victory-shader/src/emit/mod.rs
+@@ -394,6 +394,13 @@ pub fn spd_wave32_enabled() -> bool {
+     *ENABLED.get_or_init(|| std::env::var_os("VICTORY_SPD_WAVE32").as_deref() == Some(std::ffi::OsStr::new("1")))
+ }
+ 
++/// Forces DXIL WaveSize(32) for wave64 compute shaders on Apple Silicon
++/// (whose Metal GPU hardware SIMD width is 32).
++pub fn force_wave32_enabled() -> bool {
++    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ENABLED.get_or_init(|| std::env::var_os("VICTORY_FORCE_WAVE32").as_deref() == Some(std::ffi::OsStr::new("1")))
++}
++
+ /// [`translate`] made as `options` say.
+ pub fn translate_with(container: &[u8], options: Options) -> Result<HostShader, ShaderError> {
+     let c = Container::parse(container)?;

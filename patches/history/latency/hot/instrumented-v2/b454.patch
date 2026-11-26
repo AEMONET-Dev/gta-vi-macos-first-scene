@@ -1,0 +1,872 @@
+--- a/crates/victory-formats/src/texture.rs
++++ b/crates/victory-formats/src/texture.rs
+@@ -608,10 +608,22 @@
+         self.mips.get(mip as usize).map_or(0, |m| m.depth)
+     }
+ 
+-    /// Copies one subresource out of tiled memory (the whole texture,
+-    /// [`Layout::size`] bytes) into linear rows: mip `mip` of array slice
+-    /// `slice` (3D: every depth slice of the mip, `slice` 0). Rows are
+-    /// `row_pitch` bytes apart, depth slices `depth_pitch`.
++    /// End of the resident bytes for a chain starting at `first`. A single
++    /// 2D slice packs large mips after small mips. Tail levels share a block.
++    /// For other shapes only a complete texture is accepted.
++    pub fn mip_chain_prefix(&self, first: u32) -> u64 {
++        if first == 0 || self.slices != 1 || self.desc.dimension != Dimension::Tex2d {
++            return self.size;
++        }
++        let index = first.min(self.first_tail_mip);
++        index.checked_sub(1)
++            .and_then(|i| self.mips.get(i as usize))
++            .map_or(self.size, |mip| if mip.offset > 0 { mip.offset } else { self.size })
++    }
++
++    /// Copies a mip of a texture into linear rows. A single 2D texture needs
++    /// only the prefix through that mip; other shapes require the full layout.
++    /// Rows are `row_pitch` bytes apart, depth slices `depth_pitch` bytes.
+     pub fn detile(
+         &self,
+         tiled: &[u8],
+@@ -622,7 +634,7 @@
+         depth_pitch: usize,
+     ) -> Result<(), Error> {
+         self.walk(
+-            tiled.len(),
++            tiled.len() as u64 >= self.size || tiled.len() as u64 >= self.mip_chain_prefix(mip),
+             mip,
+             slice,
+             linear.len(),
+@@ -645,7 +657,7 @@
+         depth_pitch: usize,
+     ) -> Result<(), Error> {
+         self.walk(
+-            tiled.len(),
++            tiled.len() as u64 >= self.size,
+             mip,
+             slice,
+             linear.len(),
+@@ -661,7 +673,7 @@
+     #[allow(clippy::too_many_arguments)]
+     fn walk(
+         &self,
+-        tiled_len: usize,
++        tiled_available: bool,
+         mip: u32,
+         slice: u32,
+         linear_len: usize,
+@@ -701,7 +713,7 @@
+             .checked_mul(depth_pitch)
+             .and_then(|offset| offset.checked_add(slice_bytes))
+             .ok_or(Error::TooSmall)?;
+-        if tiled_len < self.size as usize || linear_len < need || row_pitch < bytes {
++        if !tiled_available || linear_len < need || row_pitch < bytes {
+             return Err(Error::TooSmall);
+         }
+         let linear = self.desc.swizzle == Swizzle::LINEAR;
+--- a/crates/victory-gpu/src/capture.rs
++++ b/crates/victory-gpu/src/capture.rs
+@@ -42,6 +42,11 @@
+ 
+ /// The first frame that ran 500 draws on the host.
+ static WORLD: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
++
++
++pub(crate) fn world_frame() -> Option<u64> {
++    WORLD.get().copied()
++}
+ 
+ /// Frame `n` was presented: notes the world's first frame.
+ pub(crate) fn presented(n: u64) {
+--- /dev/null
++++ b/crates/victory-gpu/src/host/latency.rs
+@@ -0,0 +1,75 @@
++use std::{sync::OnceLock, time::Instant};
++
++fn origin() -> Instant {
++    static ORIGIN: OnceLock<Instant> = OnceLock::new();
++    *ORIGIN.get_or_init(Instant::now)
++}
++pub(crate) fn stamp() -> Instant {
++    origin();
++    Instant::now()
++}
++pub(crate) fn us(stamp: Instant) -> u64 {
++    stamp.saturating_duration_since(origin()).as_micros() as u64
++}
++fn mode() -> &'static str {
++    static MODE: OnceLock<String> = OnceLock::new();
++    MODE.get_or_init(|| std::env::var("VICTORY_LATENCY_MODE").unwrap_or_default())
++}
++#[cfg(feature = "diagnostics")]
++pub(crate) fn offset() -> Option<u64> {
++    crate::capture::world_frame().map(|w| crate::queue::presented().saturating_sub(w))
++}
++#[cfg(not(feature = "diagnostics"))]
++pub(crate) fn offset() -> Option<u64> { None }
++pub(crate) fn recording() -> bool {
++    !mode().is_empty() && offset().is_some_and(|n| n < 62)
++}
++fn crossover(mode: &str, offset: Option<u64>) -> Option<bool> {
++    match mode {
++        "on" => Some(true),
++        "off" => Some(false),
++        "abba" | "baab" => Some(offset.is_some_and(|n| {
++            n >= 8 && (matches!(((n - 8) / 2) % 4, 1 | 2) == (mode == "abba"))
++        })),
++        _ => None,
++    }
++}
++
++fn testing_snapshots() -> bool {
++    static SNAPSHOTS: OnceLock<bool> = OnceLock::new();
++    *SNAPSHOTS.get_or_init(|| std::env::var("VICTORY_LATENCY_SUBJECT").as_deref() == Ok("snapshots"))
++}
++
++pub(crate) fn xmem_enabled() -> bool {
++    static DEFAULT: OnceLock<bool> = OnceLock::new();
++    !testing_snapshots() && crossover(mode(), offset()).unwrap_or_else(|| {
++        *DEFAULT.get_or_init(|| crate::switch::on("VICTORY_XMEM_VIEW_READ"))
++    })
++}
++
++pub(crate) fn snapshots_enabled() -> bool {
++    static DEFAULT: OnceLock<bool> = OnceLock::new();
++    if testing_snapshots() && let Some(enabled) = crossover(mode(), offset()) {
++        return enabled;
++    }
++    *DEFAULT.get_or_init(|| crate::switch::on("VICTORY_MERGE_WRITE_SNAPSHOTS"))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::crossover;
++
++    #[test]
++    fn abba_and_baab_swap_only_after_warmup() {
++        assert_eq!(crossover("abba", None), Some(false));
++        assert_eq!(crossover("baab", Some(7)), Some(false));
++        for n in 8..32 {
++            let abba = matches!((n - 8) % 8, 2 | 3 | 4 | 5);
++            assert_eq!(crossover("abba", Some(n)), Some(abba));
++            assert_eq!(crossover("baab", Some(n)), Some(!abba));
++        }
++        assert_eq!(crossover("off", None), Some(false));
++        assert_eq!(crossover("on", None), Some(true));
++        assert_eq!(crossover("", Some(12)), None);
++    }
++}
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -805,6 +805,7 @@
+ 
+     /// Runs closed lists and waits for them.
+     pub(crate) fn execute(&self, runs: &[&HostList]) {
++        let request = latency::stamp();
+         // One submission at a time from preparation to copy-back: snapshots
+         // and the ranges shaders write are per host copy, not per submission.
+         let mut submitted = self.submitted.lock().unwrap_or_else(|e| e.into_inner());
+@@ -816,6 +817,7 @@
+         // Descriptors the title copied into its heaps itself, before the
+         // heaps' views are brought up to date below.
+         crate::descriptor::sync_heaps();
++        let descriptor_end = latency::stamp();
+         // Textures heap-indexing shaders may read, uploaded first by a list
+         // of ours where their title memory changed.
+         let heaps: Vec<std::sync::Arc<crate::bindless::Viewed>> = runs
+@@ -838,6 +840,7 @@
+             .flatten();
+         #[cfg(feature = "diagnostics")]
+         drop(uploading);
++        let heaps_end = latency::stamp();
+         let runs: Vec<&HostList> = uploads
+             .as_ref()
+             .map(|u| u.list())
+@@ -903,11 +906,15 @@
+             crate::resource::life::note(0, crate::resource::life::SUBMITTED, *submitted, 0);
+             // SAFETY: closed lists; the fence and event are ours.
+             unsafe {
++                let timing = latency::recording();
++                let fence_start = timing.then(latency::stamp);
+                 self.queue.ExecuteCommandLists(group);
+-                let waited = self
+-                    .queue
+-                    .Signal(&self.fence, *submitted)
+-                    .and_then(|()| self.fence.SetEventOnCompletion(*submitted, self.event));
++                let queue_end = timing.then(latency::stamp);
++                let signal = self.queue.Signal(&self.fence, *submitted);
++                let signal_end = timing.then(latency::stamp);
++                let waited = signal.and_then(|()| self.fence.SetEventOnCompletion(*submitted, self.event));
++                let event_armed = timing.then(latency::stamp);
++                let did_wait = waited.is_ok();
+                 match waited {
+                     Ok(()) => {
+                         if cfg!(feature = "diagnostics") && crate::switch::on("VICTORY_TRACE_FENCE") {
+@@ -932,6 +939,15 @@
+                         }
+                     }
+                     Err(e) => tracing::warn!(error = %e, "host submission not waited for"),
++                }
++                if let (Some(start), Some(submit), Some(signal), Some(arm)) =
++                    (fence_start, queue_end, signal_end, event_armed)
++                {
++                    let returned = latency::stamp();
++                    tracing::info!(target: "render_latency", sequence=*submitted, group=i, lists=group.len(),
++                        started=latency::us(start), submitted=latency::us(submit), signaled=latency::us(signal),
++                        armed=latency::us(arm), returned=latency::us(returned), waited=did_wait,
++                        "fence timeline");
+                 }
+             }
+             #[cfg(feature = "diagnostics")]
+@@ -1045,6 +1061,12 @@
+             }
+         }
+         COPY_BACK[0].fetch_add(copying.elapsed().as_micros() as u64, Ordering::Relaxed);
++        if latency::recording() {
++            tracing::info!(target: "render_latency", req=latency::us(request), acquired=latency::us(started),
++                descriptors=latency::us(descriptor_end), heaps=latency::us(heaps_end), prepared=latency::us(prepared),
++                gpu_end=latency::us(prepared + gpu), writeback=latency::us(copying), done=latency::us(Instant::now()),
++                "submission timeline");
++        }
+         #[cfg(feature = "diagnostics")]
+         crate::copystat::add(crate::copystat::C::FaultsBack, crate::copystat::page_faults().saturating_sub(faults));
+         for list in runs {
+@@ -2040,8 +2062,24 @@
+         // after an earlier write declaration used to patch its snapshot here.
+         #[cfg(feature = "diagnostics")]
+         let _timed = crate::watch::Timed(std::time::Instant::now(), crate::copystat::C::StepGpuWriteUs);
+-        for (shadow, address, len) in self.snapshots {
+-            shadow.writing(address, len, false);
++        let declarations = self.snapshots.len();
++        let merge = latency::snapshots_enabled();
++        let snapshot_start = latency::recording().then(latency::stamp);
++        if merge {
++            self.snapshots.sort_unstable_by_key(|(s, at, _)| (std::sync::Arc::as_ptr(s), *at));
++            for group in self.snapshots.chunk_by(|a, b| std::sync::Arc::ptr_eq(&a.0, &b.0)) {
++                group[0].0.snapshot_declarations(group.iter().map(|(_, at, n)| (*at, *n)));
++            }
++        } else {
++            for (shadow, address, len) in self.snapshots {
++                shadow.writing(address, len, false);
++            }
++        }
++        if let Some(start) = snapshot_start {
++            let end = latency::stamp();
++            tracing::info!(target: "render_latency", merge, declarations,
++                begin=latency::us(start), end=latency::us(end),
++                elapsed_us=end.duration_since(start).as_micros() as u64, "snapshot timeline");
+         }
+     }
+ 
+@@ -2086,6 +2124,10 @@
+             crate::copystat::range(*from, to - from, start.elapsed().as_micros() as u64, 0);
+             count
+         });
++        if latency::recording() {
++            tracing::info!(target: "render_latency", begin=latency::us(started), end=latency::us(Instant::now()),
++                xmem=latency::xmem_enabled(), workers, jobs=self.uploads.len(), planned=bytes, copied, "buffer batch");
++        }
+         PREPARING[0].fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+         PREPARING[1].fetch_add(copied as u64, Ordering::Relaxed);
+         // Do not retain a separate strong reference after the title changes
+@@ -2200,7 +2242,15 @@
+     let page_end = (at | 0xfff).saturating_add(1).min(end);
+     // SAFETY: a valid out pointer of the right size, filled by VirtualQuery.
+     let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+-    if unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) } == 0 {
++    #[cfg(feature = "diagnostics")]
++    let started = Instant::now();
++    let queried = unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) };
++    #[cfg(feature = "diagnostics")]
++    {
++        crate::copystat::add(crate::copystat::C::Queries, 1);
++        crate::copystat::add(crate::copystat::C::QueryUs, started.elapsed().as_micros() as u64);
++    }
++    if queried == 0 {
+         return (page_end, true);
+     }
+     let limit = (info.BaseAddress as usize).saturating_add(info.RegionSize);
+@@ -2603,6 +2653,11 @@
+ 
+     /// Counts a presented frame.
+     fn frame(&mut self, hwnd: HWND) {
++        #[cfg(feature = "diagnostics")]
++        if latency::recording() {
++            tracing::info!(target: "render_latency", frame=crate::queue::presented(), t=latency::us(Instant::now()),
++                drawn=crate::draw::drawn(), dispatched=crate::draw::dispatched(), "frame delivered");
++        }
+         #[cfg(feature = "diagnostics")]
+         tracing::debug!(target: "victory_gpu::frame", token = crate::frame::current(), "present");
+         self.frames += 1;
+@@ -3430,3 +3485,5 @@
+         );
+     }
+ }
++
++pub(crate) mod latency;
+--- a/crates/victory-gpu/src/lib.rs
++++ b/crates/victory-gpu/src/lib.rs
+@@ -71,6 +71,15 @@
+ #[cfg(windows)]
+ mod watch;
+ 
++/// A managed physical source may compare with and refresh a caller-owned host upload buffer.
++#[cfg(all(windows, feature="diagnostics"))]
++pub static XMEM_VIEW_REFRESH: std::sync::OnceLock<unsafe fn(usize,*mut u8,usize)->Option<usize>> = std::sync::OnceLock::new();
++
++/// Run disjoint upload comparisons on the same persistent workers as the submit path.
++#[cfg(all(windows,feature="diagnostics"))]
++pub fn compare_managed_spans<T: Sync>(spans: &[T], compare: impl Fn(&T)->usize + Sync) -> usize {
++    host::upload_jobs::run(spans, 4, compare)
++}
+ #[cfg(windows)]
+ pub use host::on_failure;
+ #[cfg(windows)]
+--- a/crates/victory-gpu/src/shadow.rs
++++ b/crates/victory-gpu/src/shadow.rs
+@@ -281,6 +281,35 @@
+             t.arm(address, address + len);
+             return;
+         }
++        self.snapshot(address, len);
++    }
++
++    /// Capture the final host values once for the union of sorted declarations.
++    /// Keep the original keys because command lists release those exact ranges.
++    pub(crate) fn snapshot_declarations(
++        &self,
++        ranges: impl Iterator<Item = (usize, usize)> + Clone,
++    ) {
++        self.pending
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .extend(ranges.clone().map(|(at, len)| (at, at + len)));
++        let mut spans = ranges.filter(|&(_, len)| len != 0);
++        let Some((mut start, len)) = spans.next() else { return };
++        let mut end = start + len;
++        for (at, len) in spans {
++            if at > end {
++                self.snapshot(start, end - start);
++                start = at;
++                end = at + len;
++            } else {
++                end = end.max(at + len);
++            }
++        }
++        self.snapshot(start, end - start);
++    }
++
++    fn snapshot(&self, address: usize, len: usize) {
+         let (from, to) = self.inside(address, len);
+         if from >= to {
+             return;
+@@ -598,6 +627,31 @@
+         let (from, to) = (from.max(start), to.min(end));
+         // SAFETY: inside the mapping (`from` and `to` are within the buffer).
+         let at = unsafe { self.data.add(from - start) };
++        #[cfg(feature = "diagnostics")]
++        if self.len == 174 << 20 && from == start && to == end {
++            use crate::host::latency;
++            let begun = std::time::Instant::now();
++            let frame = crate::queue::presented();
++            let world = latency::offset();
++            let enabled = latency::xmem_enabled();
++            let refresh = enabled.then(|| crate::XMEM_VIEW_REFRESH.get()).flatten();
++            // SAFETY: this live host range is exclusively owned for the synchronous refresh.
++            let stored = refresh.and_then(|op| unsafe { op(from, at, to - from) });
++            let attempted_us = begun.elapsed().as_micros() as u64;
++            if stored.is_none() {
++                crate::host::copy_mapped(at, from as *const u8, to - from, false);
++            }
++            if latency::recording() {
++                let done = std::time::Instant::now();
++                tracing::info!(target: "render_latency", frame, world, enabled,
++                    attempted=refresh.is_some(), success=stored.is_some(),
++                    stored=stored.unwrap_or(to - from), requested=to - from, attempted_us,
++                    begin=latency::us(begun), end=latency::us(done),
++                    elapsed_us=done.duration_since(begun).as_micros() as u64,
++                    "174MiB refresh");
++            }
++            return to - from;
++        }
+         crate::host::copy_mapped(at, from as *const u8, to - from, false);
+         to - from
+     }
+@@ -1139,6 +1193,38 @@
+         unregister(p, p as u64);
+     }
+ 
++    #[test]
++    fn merged_declarations_preserve_gaps_and_original_release_keys() {
++        let p = crate::watch::tests::pool(2);
++        register(p, p as u64, (2 * PAGE) as u64);
++        let Some(shadow) = find(p as u64, (2 * PAGE) as u64) else {
++            unregister(p, p as u64);
++            return;
++        };
++        shadow.update(p, 2 * PAGE);
++        let spans = [(p, 32), (p + 16, 32), (p + 48, 8), (p + 60, 0), (p + PAGE, 12)];
++        shadow.snapshot_declarations(spans.into_iter());
++        {
++            let before = shadow.before.lock().unwrap();
++            let segments: Vec<_> = before.0.iter().map(|(at, v)| (*at, v.len())).collect();
++            assert_eq!(segments, [(0, 56), (PAGE, 12)]);
++        }
++        assert_eq!(shadow.pending.lock().unwrap().len(), spans.len());
++        shadow.write_host((p + 20) as u64, &[0xa3]);
++        shadow.write_host((p + PAGE + 2) as u64, &[0xba]);
++        for &(at, len) in spans.iter().rev() {
++            shadow.copy_back(at, len);
++        }
++        // SAFETY: this test owns both committed pages.
++        unsafe {
++            assert_eq!(*((p + 20) as *const u8), 0xa3);
++            assert_eq!(*((p + PAGE + 2) as *const u8), 0xba);
++        }
++        assert!(shadow.pending.lock().unwrap().is_empty());
++        assert!(shadow.before.lock().unwrap().0.is_empty());
++        unregister(p, p as u64);
++    }
++
+     /// Pages shaders marked (`copy_back_marks`, `victory_shader::emit`
+     /// "Write marks") go back by the bytes the GPU changed. The title writes
+     /// a marked page after the copy took it (the guard saves its bytes from
+--- a/crates/victory-gpu/src/texture.rs
++++ b/crates/victory-gpu/src/texture.rs
+@@ -400,7 +400,7 @@
+                 if let Some((first, bytes)) = self.resident_levels(available) {
+                     if let Some(changed) = read_changed(&mut last.read, self.memory, bytes) {
+                         if changed {
+-                            self.detile_prefix(&last.read, first);
++                            self.detile_from(&last.read, first);
+                             #[cfg(feature = "diagnostics")]
+                             if crate::switch::on("VICTORY_MATERIAL_INPUTS") {
+                                 static RECOVERED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+@@ -418,7 +418,7 @@
+                 static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                 let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                 if n < 10 || n.is_power_of_two() {
+-                    let readable = (1..self.mips).find(|&k| committed(self.memory, readable_bytes(&self.layout, k) as usize));
++                    let readable = (1..self.mips).find(|&k| committed(self.memory, self.layout.mip_chain_prefix(k) as usize));
+                     tracing::info!(?self.memory, size, ?self.layout.desc, self.first, ?readable, n, "material upload skipped unreadable layout");
+                 }
+             }
+@@ -449,7 +449,7 @@
+         if !changed {
+             return (size, false);
+         }
+-        self.detile_prefix(tiled, self.first);
++        self.detile_from(tiled, self.first);
+         #[cfg(feature = "diagnostics")]
+         crate::copystat::add(crate::copystat::C::TexChanged, size as u64);
+         (size, true)
+@@ -457,21 +457,9 @@
+ 
+     fn resident_levels(&self, available: usize) -> Option<(u32, usize)> {
+         (self.first + 1..self.mips).find_map(|k| {
+-            let bytes = readable_bytes(&self.layout, k) as usize;
++            let bytes = self.layout.mip_chain_prefix(k) as usize;
+             (bytes > 0 && bytes <= available).then_some((k, bytes))
+         })
+-    }
+-
+-    fn detile_prefix(&self, tiled: &[u8], first: u32) {
+-        if tiled.len() == self.layout.size as usize {
+-            self.detile_from(tiled, first);
+-        } else {
+-            // Layout::detile validates the whole allocation. Only resident
+-            // subresources are written; previously uploaded finer mips survive.
+-            let mut full = vec![0; self.layout.size as usize];
+-            full[..tiled.len()].copy_from_slice(tiled);
+-            self.detile_from(&full, first);
+-        }
+     }
+ 
+     /// Detiles `tiled` (the texture's memory) into the staging buffer.
+@@ -704,21 +692,6 @@
+     read_from.min(mips.saturating_sub(1))
+ }
+ 
+-/// The bytes at the start of a single texture's memory that hold its levels
+-/// from `first` on: the levels are stored smallest first (the mip tail,
+-/// then each larger level), so they end where level `first - 1` begins,
+-/// or where the tail ends when `first` lies in the tail.
+-fn readable_bytes(layout: &victory_formats::texture::Layout, first: u32) -> u64 {
+-    if first == 0 || layout.slices != 1 {
+-        return layout.size;
+-    }
+-    let k = first.min(layout.first_tail_mip) as usize;
+-    match k.checked_sub(1).and_then(|k| layout.mips.get(k)) {
+-        Some(next) if next.offset > 0 => next.offset,
+-        _ => layout.size,
+-    }
+-}
+-
+ /// The staging state of a title texture's host texture, made on first use
+ /// (one for all title textures of its memory).
+ fn staging(resource: This, texture: &ID3D12Resource) -> Option<Arc<Staging>> {
+@@ -780,7 +753,7 @@
+     );
+     // Watched by 64 KiB pages: a write in the last page the levels read
+     // share with what follows them still uploads them again (only them).
+-    let prefix = readable_bytes(&layout, first) as usize;
++    let prefix = layout.mip_chain_prefix(first) as usize;
+     if first > 0 {
+         if crate::switch::on("VICTORY_MATERIAL_INPUTS") && committed(memory, prefix)
+             && !committed(memory, layout.size as usize)
+@@ -858,8 +831,8 @@
+             "{}",
+             l.first_tail_mip
+         );
+-        assert_eq!(readable_bytes(&l, 0), l.size);
+-        let prefixes: Vec<u64> = (0..12).map(|first| readable_bytes(&l, first)).collect();
++        assert_eq!(l.mip_chain_prefix(0), l.size);
++        let prefixes: Vec<u64> = (0..12).map(|first| l.mip_chain_prefix(first)).collect();
+         for pair in prefixes.windows(2) {
+             assert!(
+                 pair[1] <= pair[0],
+@@ -868,7 +841,7 @@
+         }
+         // Each level on lies inside its prefix, and none before it does.
+         for first in 1..l.first_tail_mip {
+-            let end = readable_bytes(&l, first);
++            let end = l.mip_chain_prefix(first);
+             let m = &l.mips[first as usize];
+             assert!(m.offset < end, "level {first} in its prefix");
+             assert!(
+@@ -878,11 +851,11 @@
+             );
+         }
+         // From a level in the tail on: the tail block alone, the same for all.
+-        let tail = readable_bytes(&l, l.first_tail_mip);
+-        assert_eq!(readable_bytes(&l, 11), tail);
++        let tail = l.mip_chain_prefix(l.first_tail_mip);
++        assert_eq!(l.mip_chain_prefix(11), tail);
+         assert!(tail < l.size / 64, "a tail of {tail} bytes");
+         // Level 1 on is about a quarter of the memory.
+-        let one = readable_bytes(&l, 1);
++        let one = l.mip_chain_prefix(1);
+         assert!(one * 3 < l.size && one * 5 > l.size, "{one} of {}", l.size);
+     }
+ 
+@@ -953,7 +926,7 @@
+         let copy = crate::resource::host_copy(r).expect("a host copy");
+         let s = staging(r, &copy.texture).expect("its staging");
+         assert_eq!(s.first, 3);
+-        assert_eq!(s.prefix as u64, readable_bytes(&s.layout, 3));
++        assert_eq!(s.prefix as u64, s.layout.mip_chain_prefix(3));
+         assert!(
+             s.prefix * 16 < s.layout.size as usize,
+             "{} of {}",
+@@ -1001,7 +974,7 @@
+             let copy = crate::resource::host_copy(r).unwrap();
+             let s = staging(r, &copy.texture).unwrap();
+             let full = s.layout.size as usize;
+-            let prefix = readable_bytes(&s.layout, 1) as usize;
++            let prefix = s.layout.mip_chain_prefix(1) as usize;
+             assert!(s.tracked.is_none() && prefix < full && full <= REGION);
+             assert!(prefix.is_multiple_of(4096));
+             let byte = |mip:usize| s.data.add(s.footprints[mip].Offset as usize).read_volatile();
+--- a/crates/victory-hle/src/modules/xmem.rs
++++ b/crates/victory-hle/src/modules/xmem.rs
+@@ -777,6 +777,8 @@
+ /// Maps `slice` and the slices after it over `[base, base + len)`, which
+ /// must lie in one placeholder.
+ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
++    #[cfg(feature="diagnostics")]
++    if victory_gpu::XMEM_VIEW_REFRESH.get().is_some() { hot_view::invalidate(base,len); }
+     // SAFETY: splits the placeholder around the range (failing harmlessly
+     // when the range is the whole placeholder), then maps the section
+     // there; both act only on placeholders.
+@@ -887,6 +889,8 @@
+ /// Returns `[base, base + len)` to placeholders; views reaching past it
+ /// are mapped again outside it.
+ fn unmap(physical: &mut Physical, base: usize, len: usize) {
++    #[cfg(feature="diagnostics")]
++    if victory_gpu::XMEM_VIEW_REFRESH.get().is_some() { hot_view::invalidate(base,len); }
+     // No bytes: no view to return. The search below would still find the
+     // view holding `base` and cut it in two there, and its range of views
+     // starting inside would run backwards (which `BTreeMap` panics on).
+@@ -1007,7 +1011,185 @@
+     moved.into()
+ }
+ 
++// An independent read-only view stays mapped even if the title unmaps its own address.
++// Validate the title's permissions and recheck the range identity before accepting bytes.
++#[cfg(feature = "diagnostics")]
++mod hot_view {
++    use super::*;
++    use std::sync::RwLock;
++    use windows_sys::Win32::System::Memory::{FILE_MAP_READ, MapViewOfFile, UnmapViewOfFile, MEM_MAPPED};
++
++    struct ReadView {
++        address: usize,
++        len: usize,
++    }
++
++    impl Drop for ReadView {
++        fn drop(&mut self) {
++            // SAFETY: this address is our own independent read-only view; the last reader is gone.
++            unsafe { UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS { Value: self.address as *mut _ }) };
++        }
++    }
++
++    struct Layout {
++        start: usize,
++        end: usize,
++        views: Vec<(usize, usize, usize)>, // clipped start, end, actual title allocation base
++        runs: Vec<ReadView>,
++    }
++
++    #[cfg(test)]
++    pub(super) static AFTER_COPY: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> =
++        std::sync::Mutex::new(None);
++    static CURRENT: RwLock<Option<Arc<Layout>>> = RwLock::new(None);
++
++    // Call before changing a title mapping, while its physical registry is held. Acquiring
++    // the write lock only on overlap keeps unrelated mappings out of a buffer refresh.
++    pub(super) fn invalidate(start: usize, len: usize) {
++        let end = start.saturating_add(len);
++        if CURRENT.read().unwrap_or_else(|p| p.into_inner()).as_ref()
++            .is_some_and(|old| old.start < end && start < old.end)
++        {
++            CURRENT.write().unwrap_or_else(|p| p.into_inner()).take();
++        }
++    }
++
++    fn build(at: usize, end: usize, physical: &Physical) -> Option<Layout> {
++        let mut slices: Vec<(Slice, usize)> = Vec::new();
++        let mut views = Vec::new();
++        let mut cursor = at;
++        while cursor < end {
++            let (&base, (size, slice)) = physical.views.range(..=cursor).next_back()?;
++            let stop = end.min(base.checked_add(*size)?);
++            if stop <= cursor { return None; } // unregistered address, including holes
++            let index = slice.index + (cursor - base) / PAGE;
++            let count = (stop - cursor) / PAGE;
++            if let Some((prev, n)) = slices.last_mut()
++                && Arc::ptr_eq(&prev.section, &slice.section) && prev.index + *n == index
++            {
++                *n += count;
++            } else {
++                if slices.len() == 8 { return None; }
++                slices.push((Slice { section: slice.section.clone(), index }, count));
++            }
++            views.push((cursor, stop, base));
++            if views.len() > 32 { return None; }
++            cursor = stop;
++        }
++        let mut runs = Vec::new();
++        for (slice, count) in slices {
++            let offset = (slice.index * PAGE) as u64;
++            let len = count * PAGE;
++            // SAFETY: complete consecutive pages in a live section. This mapping itself holds
++            // the underlying section alive independently of future physical frees or remaps.
++            let mapping = unsafe { MapViewOfFile(slice.section.0, FILE_MAP_READ, (offset>>32) as u32, offset as u32, len) };
++            if mapping.Value.is_null() { return None; }
++            runs.push(ReadView { address: mapping.Value as usize, len });
++        }
++        Some(Layout { start: at, end, views, runs })
++    }
++
++    fn layout(at: usize, end: usize) -> Option<Arc<Layout>> {
++        if let Some(old) = CURRENT.read().unwrap_or_else(|p| p.into_inner()).as_ref()
++            && (old.start, old.end) == (at,end) { return Some(old.clone()); }
++        // Never wait for a title mapping while holding GPU submission locks.
++        let physical = PHYSICAL.try_lock().ok()?;
++        let new = Arc::new(build(at, end, &physical)?);
++        *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = Some(new.clone());
++        Some(new)
++    }
++
++    fn readable(layout: &Layout) -> bool {
++        use windows_sys::Win32::System::Memory::{VirtualQuery, PAGE_READONLY, PAGE_WRITECOPY};
++        layout.views.iter().all(|&(begin,end,base)| {
++            let mut cursor = begin;
++            while cursor < end {
++                let mut info = MEMORY_BASIC_INFORMATION::default();
++                // SAFETY: only querying metadata; no guest byte is dereferenced here.
++                if unsafe { VirtualQuery(cursor as *const _, &mut info, size_of_val(&info)) } == 0
++                    || info.State != MEM_COMMIT || info.Type != MEM_MAPPED
++                    || info.AllocationBase as usize != base
++                    || !matches!(info.Protect, PAGE_READONLY | PAGE_READWRITE)
++                    || info.AllocationProtect == PAGE_WRITECOPY { return false; }
++                let next = (info.BaseAddress as usize).saturating_add(info.RegionSize).min(end);
++                if next <= cursor { return false; }
++                cursor = next;
++            }
++            true
++        })
++    }
++
++    // These read live foreign memory without constructing Rust references into memory a title
++    // thread may concurrently update. The GPU caller owns the host destination for the copy.
++    unsafe extern "C" {
++        fn memcpy(dst: *mut c_void, src: *const c_void, len: usize) -> *mut c_void;
++    }
++
++    // Cache-line equality, unaligned native words, no probabilistic fingerprint and no
++    // Rust references to mutable title mappings. Every caller supplies whole 64-byte lines.
++    unsafe fn equal(a: *const u8,b: *const u8,len:usize) -> bool {
++        for i in (0..len).step_by(64) {
++            let mut bits=0u128;
++            for lane in [0,16,32,48] {
++                unsafe { bits |= a.add(i+lane).cast::<u128>().read_unaligned() ^ b.add(i+lane).cast::<u128>().read_unaligned(); }
++            }
++            if bits != 0 { return false; }
++        }
++        true
++    }
++
++    /// Success after refreshing every byte, or None: redo the whole range with checked reads.
++    pub(super) unsafe fn refresh(at: usize, dst: *mut u8, len: usize) -> Option<usize> {
++        if len == 0 || !at.is_multiple_of(PAGE) || !len.is_multiple_of(PAGE) { return None; }
++        let layout = layout(at,at.checked_add(len)?)?;
++        if !readable(&layout) { return None; }
++        let mut offset = 0;
++        let mut spans = Vec::with_capacity(len / (4<<20) + layout.runs.len());
++        for run in &layout.runs {
++            for i in (0..run.len).step_by(4 << 20) {
++                spans.push((run.address + i, dst as usize + offset + i, (run.len-i).min(4<<20)));
++            }
++            offset += run.len;
++        }
++        let written = victory_gpu::compare_managed_spans(&spans, |&(src,dst,size)| {
++            let mut written = 0;
++            for i in (0..size).step_by(PAGE) {
++                let a = (src+i) as *const u8;
++                let b = (dst+i) as *mut u8;
++                // SAFETY: source mappings stay pinned in layout until all workers are joined;
++                // disjoint chunks in the currently idle host buffer have a single writer.
++                unsafe {
++                    if equal(a,b,PAGE) { continue; }
++                    for k in (0..PAGE).step_by(4096) {
++                        if !equal(a.add(k),b.add(k),4096) {
++                            memcpy(b.add(k).cast(),a.add(k).cast(),4096);
++                            written += 4096;
++                        }
++                    }
++                }
++            }
++            written
++        });
++        #[cfg(test)]
++        if let Some(change_mapping) = AFTER_COPY.lock().unwrap().take() {
++            change_mapping();
++        }
++        // A known identity change during comparison demands a complete retry, even if some
++        // changed pages had already reached dst. All title reads that fail use the old path.
++        if !CURRENT.read().unwrap_or_else(|p| p.into_inner()).as_ref().is_some_and(|old| Arc::ptr_eq(old,&layout))
++            || !readable(&layout) { return None; }
++        Some(written)
++    }
++}
++
+ pub(crate) fn module() -> HleModule {
++    #[cfg(feature="diagnostics")]
++    if on_wine() && (
++        matches!(std::env::var("VICTORY_LATENCY_MODE").as_deref(), Ok("abba" | "baab" | "on" | "off"))
++        || std::env::var("VICTORY_XMEM_VIEW_READ").as_deref() == Ok("1")
++    ) {
++        let _ = victory_gpu::XMEM_VIEW_REFRESH.set(hot_view::refresh);
++    }
+     HleModule {
+         name: "xmem",
+         dlls: &["xmem.dll"],
+@@ -1367,4 +1549,96 @@
+         assert_eq!(XMemFreePhysicalPages(3, a.as_ptr()), 1);
+         assert_eq!(XMemFreePhysicalPages(1, b.as_ptr()), 1);
+     }
+-}
++    #[cfg(feature="diagnostics")]
++    #[test]
++    fn managed_read_view_follows_alias_and_checks_visibility_and_revision() {
++        use windows_sys::Win32::System::Memory::{PAGE_NOACCESS, VirtualProtect};
++        let _ = victory_gpu::XMEM_VIEW_REFRESH.set(hot_view::refresh);
++        let p = allocate(4);
++        let reserve = || XMemVirtualAlloc(std::ptr::null_mut(), 3*PAGE, MEM_RESERVE|PAGES_64K,0,PAGE_READWRITE);
++        let (a,b) = (reserve(),reserve());
++        let at = |i| a.wrapping_byte_add(i*PAGE);
++        assert!(!a.is_null() && !b.is_null());
++        assert_eq!(XMemMapPhysicalPages(a,1,p[3..].as_ptr()),a);
++        assert_eq!(XMemMapPhysicalPages(at(1),1,p.as_ptr()),at(1));
++        assert_eq!(XMemMapPhysicalPages(at(2),1,p[1..].as_ptr()),at(2));
++        assert_eq!(XMemMapPhysicalPages(b,1,p[3..].as_ptr()),b);
++        let mut dst=vec![0xccu8;3*PAGE];
++        let read = |dst:&mut [u8]| unsafe { hot_view::refresh(a as usize,dst.as_mut_ptr(),dst.len()) };
++        assert_eq!(read(&mut dst),Some(3*PAGE));
++        assert_eq!(read(&mut dst),Some(0));
++        unsafe { b.cast::<u8>().add(4086).write(29); }
++        assert_eq!(read(&mut dst),Some(4096));
++        assert_eq!(dst[4086],29);
++        dst[2*PAGE+56]=17;
++        assert_eq!(read(&mut dst),Some(4096));
++        assert_eq!(dst[2*PAGE+56],0);
++        let mut old=0;
++        assert_ne!(unsafe {VirtualProtect(at(1),4096,PAGE_NOACCESS,&mut old)},0);
++        assert_eq!(read(&mut dst),None);
++        assert_ne!(unsafe {VirtualProtect(at(1),4096,PAGE_READWRITE,&mut old)},0);
++        assert_eq!(read(&mut dst),Some(0));
++        assert_eq!(XMemMapPhysicalPages(a,1,std::ptr::null()),a);
++        assert_eq!(read(&mut dst),None);
++        assert_eq!(XMemMapPhysicalPages(a,1,p[2..].as_ptr()),a);
++        assert_eq!(read(&mut dst),Some(4096));
++        assert_eq!(dst[4086],0);
++        // Simulate a remap after copying but before committing the answer. The old
++        // mapping stays alive, and the completed copy must be rejected by identity.
++        let (base,next_page) = (a as usize, p[3]);
++        *hot_view::AFTER_COPY.lock().unwrap()=Some(Box::new(move || {
++            let a=base as *mut c_void;
++            assert_eq!(XMemMapPhysicalPages(a,1,&next_page),a);
++        }));
++        assert_eq!(read(&mut dst),None);
++        assert_eq!(read(&mut dst),Some(4096));
++        assert_eq!(dst[4086],29);
++        assert_eq!(XMemFreePhysicalPages(p.len(),p.as_ptr()),1);
++        assert_eq!(read(&mut dst),Some(0));
++        assert_eq!(XMemMapPhysicalPages(a,3,std::ptr::null()),a);
++        assert_eq!(XMemMapPhysicalPages(b,1,std::ptr::null()),b);
++        assert_eq!(read(&mut dst),None);
++    }
++
++    #[cfg(feature="diagnostics")]
++    #[test]
++    #[ignore]
++    fn managed_view_read_benchmark() {
++        use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
++        use std::time::Instant;
++        const N:usize=174<<20;
++        let pages=allocate(N/PAGE);
++        let a=XMemVirtualAlloc(std::ptr::null_mut(), N, MEM_RESERVE|PAGES_64K,0,PAGE_READWRITE);
++        assert!(!a.is_null());
++        let k=27*1024*1024/PAGE;
++        assert_eq!(XMemMapPhysicalPages(a,k,pages[pages.len()-k..].as_ptr()),a);
++        for (start,number,index) in [(k,1024,0),(k+1024,pages.len()-k-1024,1024)] {
++            let at=a.wrapping_byte_add(start*PAGE);
++            assert_eq!(XMemMapPhysicalPages(at,number,pages[index..].as_ptr()),at);
++        }
++        let mut out=vec![0xc7u8;N]; let mut reference=vec![0x88u8;N];
++        unsafe { std::ptr::write_bytes(a,0x25,N); }
++        let old=|dst:&mut [u8]| {
++            let mut done=0;
++            assert_ne!(unsafe{ReadProcessMemory(GetCurrentProcess(),a,dst.as_mut_ptr().cast(),dst.len(),&mut done)},0);
++            assert_eq!(done,N);
++        };
++        let times=|v:&[u64]| { let mut v=v.to_vec(); v.sort_unstable(); (v[15],v[30]) };
++        let (mut baseline,mut exact)=(Vec::new(),Vec::new());
++        for i in 0..36 {
++            let touch = i%4==2;
++            if touch { unsafe { a.cast::<u8>().add((i*997)*4096%N).write(i as u8); } }
++            let mut run=|view| {
++                let start=Instant::now();
++                if view {
++                    let written=unsafe { hot_view::refresh(a as usize,out.as_mut_ptr(),N) }.unwrap();
++                    let us=start.elapsed().as_micros() as u64;
++                    if i>=4 { exact.push(us); assert_eq!(written,if touch {4096}else{0}); }
++                } else { old(&mut reference); let us=start.elapsed().as_micros() as u64; if i>=4 {baseline.push(us);} }
++            };
++            run(i%2==0); run(i%2!=0);
++            assert!(out==reference);
++        }
++        eprintln!("174MiB, 3 title VA views, 2 physical runs, 32 paired alternating samples, 25% of calls modify one 4KiB block; all outputs compared: RPM p50/p95 {:?} us, managed compare p50/p95 {:?} us",times(&baseline),times(&exact));
++    }
++}

@@ -1,0 +1,1543 @@
+diff --git a/apps/victory/src/run.rs b/apps/victory/src/run.rs
+index fbfb5477f2fe4f39e4790d6e065bd7c803be2bc6..c12ac0f09955c0507985513ece6e10e51a3983d2 100644
+--- a/apps/victory/src/run.rs
++++ b/apps/victory/src/run.rs
+@@ -80,6 +80,15 @@ pub fn run(
+         image.base(),
+         image.info().image_base
+     );
++    // Masked stores redone as plain stores Rosetta can resume, so write
++    // tracking can run under Rosetta (experiment; off unless asked for).
++    let masked = victory_loader::masked::masked_stores(&prepared.info, &original);
++    println!("masked stores  {}", victory_loader::masked::summary(&masked));
++    if let Ok(which) = std::env::var("VICTORY_PATCH_MASKED") {
++        let wanted = victory_loader::masked::wanted_from(Some(&which));
++        let n = victory_loader::masked::patch(image.base() as u64, &prepared.info, &original, wanted);
++        println!("masked stores  {n} patched to plain stores");
++    }
+     let resolver = HleResolver::new(if strict {
+         HostPolicy::none()
+     } else {
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index aa40683f15cea9e5b73778d5e5224341983e604d..b8528a7995a2a55be0ca19d740392c67f5a017d8 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -5,6 +5,7 @@
+ //! overlap them with per-submission fences once more than clears run.
+ 
+ mod refresh;
++pub(crate) mod refresh_timing;
+ mod sparse;
+ pub(crate) mod upload_jobs;
+ 
+@@ -2078,14 +2079,40 @@ impl Batch {
+             limit.min(self.uploads.len()).min((bytes / (8 << 20)).max(1))
+         };
+         let started = Instant::now();
+-        let copied = upload_jobs::run(&self.uploads, workers, |(shadow, from, to)| {
+-            #[cfg(feature = "diagnostics")]
+-            let start = Instant::now();
+-            let count = shadow.update(*from, to - from);
+-            #[cfg(feature = "diagnostics")]
+-            crate::copystat::range(*from, to - from, start.elapsed().as_micros() as u64, 0);
+-            count
+-        });
++        // Opt-in (`VICTORY_REFRESH_TIMING=1`): what the worker this batch
++        // waits for spent its time on.
++        let timing = refresh_timing::batch();
++        let timing_ref = timing.as_ref();
++        let job = |(shadow, from, to): &(std::sync::Arc<crate::shadow::Shadow>, usize, usize)| {
++            let run = || {
++                #[cfg(feature = "diagnostics")]
++                let start = Instant::now();
++                let count = shadow.update(*from, to - from);
++                #[cfg(feature = "diagnostics")]
++                crate::copystat::range(*from, to - from, start.elapsed().as_micros() as u64, 0);
++                count
++            };
++            match timing_ref {
++                Some(t) => t.job(run),
++                None => run(),
++            }
++        };
++        // Experiment (`VICTORY_TRACK_ONLY_LEN`): the one guard-tracked copy
++        // changes page protection, so its uploads run in order on one
++        // worker first; the untracked rest keep their parallel workers.
++        let copied = if crate::watch::scoped_len().is_some() && !crate::watch::fault_tracking() {
++            let (tracked, free): (Vec<_>, Vec<_>) = self.uploads.drain(..).partition(|(s, _, _)| s.is_tracked());
++            let workers = workers.min(free.len()).max(1);
++            let copied = upload_jobs::run(&tracked, 1, job) + upload_jobs::run(&free, workers, job);
++            self.uploads = tracked;
++            self.uploads.extend(free);
++            copied
++        } else {
++            upload_jobs::run(&self.uploads, workers, job)
++        };
++        if let Some(t) = timing {
++            t.finish(workers, bytes);
++        }
+         PREPARING[0].fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+         PREPARING[1].fetch_add(copied as u64, Ordering::Relaxed);
+         // Do not retain a separate strong reference after the title changes
+@@ -2133,7 +2160,9 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
+ fn first_read(src: *const u8, dst: *mut u8, len: usize) -> bool {
+     #[cfg(feature = "diagnostics")]
+     let moved = std::time::Instant::now();
++    let probe = refresh_timing::start();
+     let whole = read(src, dst, len);
++    probe.done(if whole { refresh_timing::Kind::FirstOk } else { refresh_timing::Kind::FirstFailed }, len);
+     #[cfg(feature = "diagnostics")]
+     crate::copystat::add(crate::copystat::C::MoveUs, moved.elapsed().as_micros() as u64);
+     whole
+@@ -2172,15 +2201,26 @@ fn copy_regions(
+         if !readable {
+             hole(at, next);
+             zero_unreadable(to, next - at, title_dst);
+-        } else if !read(at as *const u8, to, next - at) {
++        } else if !{
++            let probe = refresh_timing::start();
++            let ok = read(at as *const u8, to, next - at);
++            probe.done(refresh_timing::Kind::Retry, next - at);
++            ok
++        } {
+             // A mapping changed, or the query failed. Salvage readable
+             // pieces without trusting the protection returned by the query.
++            let timed_read = |from: usize, out: *mut u8, n: usize| {
++                let probe = refresh_timing::start();
++                let ok = read(from as *const u8, out, n);
++                probe.done(refresh_timing::Kind::Retry, n);
++                ok
++            };
+             for_pieces(at, next - at, 64 << 10, |chunk, size| {
+                 let out = dst.wrapping_add(chunk - start);
+-                if !read(chunk as *const u8, out, size) {
++                if !timed_read(chunk, out, size) {
+                     for_pieces(chunk, size, 4 << 10, |page, count| {
+                         let out = dst.wrapping_add(page - start);
+-                        if !read(page as *const u8, out, count) {
++                        if !timed_read(page, out, count) {
+                             zero_unreadable(out, count, title_dst);
+                         }
+                     });
+@@ -2200,7 +2240,10 @@ fn source_region(at: usize, end: usize) -> (usize, bool) {
+     let page_end = (at | 0xfff).saturating_add(1).min(end);
+     // SAFETY: a valid out pointer of the right size, filled by VirtualQuery.
+     let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+-    if unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) } == 0 {
++    let probe = refresh_timing::start();
++    let queried = unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) };
++    probe.done(refresh_timing::Kind::Query, 0);
++    if queried == 0 {
+         return (page_end, true);
+     }
+     let limit = (info.BaseAddress as usize).saturating_add(info.RegionSize);
+@@ -2218,6 +2261,12 @@ fn source_region(at: usize, end: usize) -> (usize, bool) {
+ fn zero_unreadable(dst: *mut u8, len: usize, title_dst: bool) {
+     #[cfg(feature = "diagnostics")]
+     crate::copystat::add(crate::copystat::C::Unmapped, len as u64);
++    let probe = refresh_timing::start();
++    zero_unreadable_untimed(dst, len, title_dst);
++    probe.done(refresh_timing::Kind::Zero, len);
++}
++
++fn zero_unreadable_untimed(dst: *mut u8, len: usize, title_dst: bool) {
+     if title_dst {
+         static ZEROS: [u8; 64 << 10] = [0; 64 << 10];
+         let mut offset = 0;
+diff --git a/crates/victory-gpu/src/host/refresh_timing.rs b/crates/victory-gpu/src/host/refresh_timing.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..a8dcf7020ceed47b5e4ca6fb8566434469d7f0ad
+--- /dev/null
++++ b/crates/victory-gpu/src/host/refresh_timing.rs
+@@ -0,0 +1,339 @@
++//! Opt-in timing of buffer-refresh batches (`VICTORY_REFRESH_TIMING=1`).
++//!
++//! A refresh batch runs on the submitting thread and its workers, and the
++//! submission waits for all of them, so a batch's wall time is time the
++//! frame waits. This splits that time on the worker that finished last (the
++//! one the batch actually waited for) into what the copy path spent it on:
++//!
++//! * `first`: the optimistic whole-span `ReadProcessMemory`, split into
++//!   reads that succeeded and reads that failed on an unmapped page (Wine
++//!   copies the bytes before the hole and then reports failure, so the
++//!   failed time is wasted work);
++//! * `query`: `VirtualQuery` calls finding the readable regions;
++//! * `retry`: the per-region re-reads and their 64 KiB / 4 KiB salvage;
++//! * `zero`: zero-filling unreadable regions in the host copy;
++//! * `other`: the rest of the jobs (planning, tracking, snapshots).
++//!
++//! One `refresh batch timing` line per batch; the first timestamp in the
++//! line is when the batch ended, its wall time is `wall_us`. Off, each probe
++//! costs one relaxed load.
++
++use std::cell::Cell;
++use std::sync::Mutex;
++use std::sync::atomic::{AtomicU8, Ordering};
++use std::time::Instant;
++
++/// What a probe timed.
++#[derive(Clone, Copy)]
++pub(crate) enum Kind {
++    FirstOk = 0,
++    FirstFailed = 1,
++    Query = 2,
++    Retry = 3,
++    Zero = 4,
++}
++
++const KINDS: usize = 5;
++const NAMES: [&str; KINDS] = ["first_ok", "first_failed", "query", "retry", "zero"];
++
++/// Per-thread running totals: microseconds, calls and bytes per kind.
++#[derive(Clone, Copy, Default)]
++pub(crate) struct Totals {
++    us: [u64; KINDS],
++    calls: [u64; KINDS],
++    bytes: [u64; KINDS],
++    /// Holes a copy could not remember because its list was full (they
++    /// are walked with `VirtualQuery` again on every later copy).
++    capped: u64,
++}
++
++impl Totals {
++    fn minus(&self, o: &Totals) -> Totals {
++        let mut d = Totals::default();
++        for k in 0..KINDS {
++            d.us[k] = self.us[k] - o.us[k];
++            d.calls[k] = self.calls[k] - o.calls[k];
++            d.bytes[k] = self.bytes[k] - o.bytes[k];
++        }
++        d.capped = self.capped - o.capped;
++        d
++    }
++    fn add(&mut self, o: &Totals) {
++        for k in 0..KINDS {
++            self.us[k] += o.us[k];
++            self.calls[k] += o.calls[k];
++            self.bytes[k] += o.bytes[k];
++        }
++        self.capped += o.capped;
++    }
++    fn timed_us(&self) -> u64 {
++        self.us.iter().sum()
++    }
++    fn describe(&self) -> String {
++        let mut s = String::new();
++        for k in 0..KINDS {
++            s.push_str(&format!(
++                "{}={}us/{}x/{}MB ",
++                NAMES[k],
++                self.us[k],
++                self.calls[k],
++                self.bytes[k] / 1_000_000
++            ));
++        }
++        s.push_str(&format!("capped={}", self.capped));
++        s
++    }
++}
++
++thread_local! {
++    static TOTALS: Cell<Totals> = Cell::new(Totals::default());
++}
++
++static STATE: AtomicU8 = AtomicU8::new(0);
++
++/// Whether timing is on (`VICTORY_REFRESH_TIMING=1`), read once.
++pub(crate) fn on() -> bool {
++    match STATE.load(Ordering::Relaxed) {
++        1 => false,
++        2 => true,
++        _ => {
++            let on = crate::switch::on("VICTORY_REFRESH_TIMING");
++            STATE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
++            on
++        }
++    }
++}
++
++/// Tests: turn timing on or off regardless of the environment.
++#[cfg(test)]
++pub(crate) fn force(on: bool) {
++    STATE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
++}
++
++/// A started probe; `done` adds its time to this thread's totals.
++pub(crate) struct Probe(Option<Instant>);
++
++pub(crate) fn start() -> Probe {
++    Probe(on().then(Instant::now))
++}
++
++impl Probe {
++    pub(crate) fn done(self, kind: Kind, bytes: usize) {
++        if let Some(t) = self.0 {
++            let us = t.elapsed().as_micros() as u64;
++            TOTALS.with(|c| {
++                let mut v = c.get();
++                v.us[kind as usize] += us;
++                v.calls[kind as usize] += 1;
++                v.bytes[kind as usize] += bytes as u64;
++                c.set(v);
++            });
++        }
++    }
++}
++
++/// A copy's hole list reached its cap.
++pub(crate) fn capped() {
++    if on() {
++        TOTALS.with(|c| {
++            let mut v = c.get();
++            v.capped += 1;
++            c.set(v);
++        });
++    }
++}
++
++fn snapshot() -> Totals {
++    TOTALS.with(Cell::get)
++}
++
++/// One job of a batch: which thread ran it, when it ended (µs after the
++/// batch began), and what its probes saw.
++struct Job {
++    thread: std::thread::ThreadId,
++    end_us: u64,
++    busy_us: u64,
++    totals: Totals,
++}
++
++/// The jobs of one batch being timed.
++pub(crate) struct Batch {
++    began: Instant,
++    jobs: Mutex<Vec<Job>>,
++}
++
++/// What [`Batch::finish`] found (read back by tests; logged otherwise).
++#[derive(Clone, Copy)]
++#[cfg_attr(not(test), allow(dead_code))]
++pub(crate) struct Summary {
++    pub(crate) wall_us: u64,
++    pub(crate) workers: usize,
++    pub(crate) jobs: usize,
++    pub(crate) critical: Totals,
++    pub(crate) critical_busy_us: u64,
++    pub(crate) all: Totals,
++}
++
++#[cfg(test)]
++impl Summary {
++    pub(crate) fn critical_us(&self, kind: Kind) -> u64 {
++        self.critical.us[kind as usize]
++    }
++    pub(crate) fn all_calls(&self, kind: Kind) -> u64 {
++        self.all.calls[kind as usize]
++    }
++    pub(crate) fn all_bytes(&self, kind: Kind) -> u64 {
++        self.all.bytes[kind as usize]
++    }
++}
++
++pub(crate) fn batch() -> Option<Batch> {
++    on().then(|| Batch {
++        began: Instant::now(),
++        jobs: Mutex::default(),
++    })
++}
++
++impl Batch {
++    /// Runs one job of the batch, timing it.
++    pub(crate) fn job<R>(&self, f: impl FnOnce() -> R) -> R {
++        let before = snapshot();
++        let started = Instant::now();
++        let r = f();
++        let busy_us = started.elapsed().as_micros() as u64;
++        let job = Job {
++            thread: std::thread::current().id(),
++            end_us: self.began.elapsed().as_micros() as u64,
++            busy_us,
++            totals: snapshot().minus(&before),
++        };
++        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).push(job);
++        r
++    }
++
++    /// Logs the batch: the totals of the worker that finished last (the
++    /// one the submission waited for) and of all workers.
++    pub(crate) fn finish(self, workers: usize, bytes: usize) -> Summary {
++        let wall_us = self.began.elapsed().as_micros() as u64;
++        let jobs = self.jobs.into_inner().unwrap_or_else(|e| e.into_inner());
++        let last = jobs.iter().max_by_key(|j| j.end_us).map(|j| j.thread);
++        let (mut critical, mut all) = (Totals::default(), Totals::default());
++        let mut critical_busy_us = 0;
++        let mut threads = std::collections::HashSet::new();
++        for j in &jobs {
++            all.add(&j.totals);
++            threads.insert(j.thread);
++            if Some(j.thread) == last {
++                critical.add(&j.totals);
++                critical_busy_us += j.busy_us;
++            }
++        }
++        let summary = Summary {
++            wall_us,
++            workers: threads.len(),
++            jobs: jobs.len(),
++            critical,
++            critical_busy_us,
++            all,
++        };
++        tracing::info!(
++            target: "victory_gpu::refresh_timing",
++            "refresh batch timing wall_us={wall_us} workers={} planned_workers={workers} jobs={} bytes={bytes} \
++             critical_busy_us={critical_busy_us} critical_timed_us={} | critical: {} | all: {}",
++            summary.workers,
++            summary.jobs,
++            critical.timed_us(),
++            critical.describe(),
++            all.describe(),
++        );
++        summary
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::{Kind, batch, force};
++    use windows_sys::Win32::System::Memory::{
++        MEM_COMMIT, MEM_DECOMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
++    };
++
++    /// A batch of 4-worker copies over title memory with unmapped 64 KiB
++    /// blocks: the copies stay exact, and the timing splits the work into
++    /// failed first reads, region queries, retries and zero-fill, with the
++    /// critical worker's timed parts inside the batch's wall time. A second
++    /// batch over the same spans uses the remembered holes: no failed first
++    /// read of a whole span, the same zero-fill.
++    #[test]
++    fn timing_splits_a_batch_over_holes() {
++        const B: usize = 64 << 10;
++        const SPAN: usize = 16 * B;
++        const SPANS: usize = 8;
++        force(true);
++        // SAFETY: our own memory, released at the end.
++        unsafe {
++            let src = VirtualAlloc(std::ptr::null(), SPANS * SPAN, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE).cast::<u8>();
++            assert!(!src.is_null());
++            for i in 0..SPANS * SPAN {
++                src.add(i).write((i / 4096) as u8 | 1);
++            }
++            let mut expected: Vec<u8> = (0..SPANS * SPAN).map(|i| (i / 4096) as u8 | 1).collect();
++            // Two holes in every span: one in the middle, one at the end.
++            let mut hole_bytes = 0;
++            for s in 0..SPANS {
++                for b in [5, 15] {
++                    let at = s * SPAN + b * B;
++                    assert_ne!(VirtualFree(src.add(at).cast(), B, MEM_DECOMMIT), 0);
++                    expected[at..at + B].fill(0);
++                    hole_bytes += B;
++                }
++            }
++            let mut dst = vec![0xeeu8; SPANS * SPAN];
++            let out = dst.as_mut_ptr() as usize;
++            let base = src as usize;
++            let jobs: Vec<usize> = (0..SPANS).collect();
++            let mut summaries = Vec::new();
++            // One worker twice (hole hints are per thread), then four.
++            for workers in [1, 1, 4] {
++                let timing = batch().expect("timing is on");
++                crate::host::upload_jobs::run(&jobs, workers, |&s| {
++                    timing.job(|| {
++                        crate::host::copy_mapped((out + s * SPAN) as *mut u8, (base + s * SPAN) as *const u8, SPAN, false);
++                        SPAN
++                    })
++                });
++                summaries.push(timing.finish(4, SPANS * SPAN));
++                assert!(dst == expected, "copy matches title memory, zeros at the holes");
++                dst.fill(0xee);
++            }
++            let (first, second, parallel) = (summaries[0], summaries[1], summaries[2]);
++            for s in [&first, &second, &parallel] {
++                assert_eq!(s.jobs, SPANS);
++                assert!((1..=4).contains(&s.workers));
++                assert_eq!(s.all_bytes(Kind::Zero) as usize, hole_bytes, "each hole zero-filled once");
++                assert!(s.all_calls(Kind::Query) > 0, "holes are found by region queries");
++                let timed: u64 = [Kind::FirstOk, Kind::FirstFailed, Kind::Query, Kind::Retry, Kind::Zero]
++                    .iter()
++                    .map(|&k| s.critical_us(k))
++                    .sum();
++                assert!(timed <= s.critical_busy_us + 1, "timed parts lie inside the critical worker's jobs");
++                assert!(s.critical_busy_us <= s.wall_us + 1, "the critical worker lies inside the batch");
++            }
++            assert_eq!(first.all_calls(Kind::FirstFailed) as usize, SPANS, "each span's first whole read fails once");
++            assert_eq!(second.all_calls(Kind::FirstFailed), 0, "remembered holes avoid the failing whole read");
++            assert!(second.all_calls(Kind::FirstOk) > 0, "readable runs between remembered holes read directly");
++            assert!(parallel.critical_busy_us <= parallel.wall_us + 1);
++            println!(
++                "first pass: wall {} us, failed first reads {} ({} MB), queries {}; second: wall {} us, queries {}",
++                first.wall_us,
++                first.all_calls(Kind::FirstFailed),
++                first.all_bytes(Kind::FirstFailed) / 1_000_000,
++                first.all_calls(Kind::Query),
++                second.wall_us,
++                second.all_calls(Kind::Query)
++            );
++            assert_ne!(VirtualFree(src.cast(), 0, MEM_RELEASE), 0);
++        }
++        force(false);
++        assert!(batch().is_none(), "off: no batch timing");
++    }
++}
+diff --git a/crates/victory-gpu/src/host/sparse.rs b/crates/victory-gpu/src/host/sparse.rs
+index b2ab0d82dadbf03c50b90c3f879ec40ac629c2bf..45ea0b769876a8c78d8bb08de2ae0c13bea62e6e 100644
+--- a/crates/victory-gpu/src/host/sparse.rs
++++ b/crates/victory-gpu/src/host/sparse.rs
+@@ -52,6 +52,8 @@ pub(super) fn copy(dst: *mut u8, src: *const u8, len: usize) {
+                 *last = hi;
+             } else if scratch.len() < MAX_HOLES {
+                 scratch.push((lo, hi));
++            } else if scratch.len() == MAX_HOLES {
++                super::refresh_timing::capped();
+             }
+         };
+         let mut walk = |lo: usize, hi: usize, query_first: bool| {
+diff --git a/crates/victory-gpu/src/shadow.rs b/crates/victory-gpu/src/shadow.rs
+index 3bf444557fefe85cfe4ea5f6570edce762a7b6f0..cf16159ac83597fba52f2dbe0ecc5d7502a92a35 100644
+--- a/crates/victory-gpu/src/shadow.rs
++++ b/crates/victory-gpu/src/shadow.rs
+@@ -518,9 +518,75 @@ impl Shadow {
+             if at < to {
+                 bytes += self.update_free(at, to);
+             }
++            self.audit(from, to);
+             return bytes;
+         }
+-        self.update_free(from, to)
++        let bytes = self.update_free(from, to);
++        self.audit(from, to);
++        bytes
++    }
++
++    /// Whether this copy is guard-tracked (not taken whole each time).
++    pub(crate) fn is_tracked(&self) -> bool {
++        self.tracked.is_some()
++    }
++
++    /// Missed-write audit (`VICTORY_TRACK_AUDIT=1`, tracked copies only):
++    /// right after `[from, to)` was brought up to date, every whole page
++    /// there that the tracker calls unchanged must hold in the copy exactly
++    /// the bytes title memory holds. A difference on a page the tracker
++    /// still calls unchanged after the compare is a write it missed; one on
++    /// a page it marked meanwhile is a write racing the compare (it will be
++    /// taken next time). Pages under ranges shaders may be writing are
++    /// left out: the copy may hold the GPU's bytes there by design.
++    fn audit(&self, from: usize, to: usize) {
++        let Some(t) = &self.tracked else { return };
++        if !crate::switch::on("VICTORY_TRACK_AUDIT") {
++            return;
++        }
++        let pending: Vec<(usize, usize)> = self
++            .pending
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .iter()
++            .copied()
++            .collect();
++        let start = self.start as usize;
++        let end = (self.start + self.len) as usize;
++        let mut title = vec![0u8; PAGE];
++        let mut page = from.div_ceil(PAGE);
++        while (page + 1) * PAGE <= to {
++            let (a, b) = (page * PAGE, (page + 1) * PAGE);
++            page += 1;
++            if a < start || b > end {
++                continue;
++            }
++            if pending.iter().any(|&(s, e)| s < b && e > a) {
++                crate::watch::audit_note(crate::watch::Audit::Skipped, a);
++                continue;
++            }
++            if t.changed(a / PAGE) {
++                continue;
++            }
++            if !crate::host::read_into(a as *const u8, &mut title) {
++                crate::watch::audit_note(crate::watch::Audit::Unreadable, a);
++                continue;
++            }
++            // SAFETY: `[a, b)` lies inside the buffer, so inside the mapping.
++            let host = unsafe { std::slice::from_raw_parts(self.data.add(a - start), PAGE) };
++            if host == &title[..] {
++                crate::watch::audit_note(crate::watch::Audit::Same, a);
++            } else if t.changed(a / PAGE) {
++                crate::watch::audit_note(crate::watch::Audit::Raced, a);
++            } else {
++                let words = host
++                    .chunks_exact(4)
++                    .zip(title.chunks_exact(4))
++                    .filter(|(x, y)| x != y)
++                    .count();
++                crate::watch::audit_note(crate::watch::Audit::Missed(words), a);
++            }
++        }
+     }
+ 
+     /// [`Shadow::update`] of `[from, to)` where a list submitted earlier
+diff --git a/crates/victory-gpu/src/watch.rs b/crates/victory-gpu/src/watch.rs
+index a2675aa9c7a3a426461501ac4b1a1650e38bdda1..9ee82b1b53039282bd99cb8a75971c39dfcae156 100644
+--- a/crates/victory-gpu/src/watch.rs
++++ b/crates/victory-gpu/src/watch.rs
+@@ -61,6 +61,18 @@ pub fn fault_tracking() -> bool {
+     *ON
+ }
+ 
++/// Experiment (`VICTORY_TRACK_ONLY_LEN=<bytes>`): with `fault_tracking`
++/// off, guard-track only host copies of exactly this many bytes (the
++/// title's 174 MiB buffer), so one hot copy stops being taken whole while
++/// everything else stays as it is. Needs the masked stores patched
++/// (`VICTORY_PATCH_MASKED`) under Rosetta.
++pub fn scoped_len() -> Option<usize> {
++    static LEN: LazyLock<Option<usize>> = LazyLock::new(|| {
++        std::env::var("VICTORY_TRACK_ONLY_LEN").ok().and_then(|v| v.trim().parse().ok())
++    });
++    *LEN
++}
++
+ /// `fault_tracking` from the variable's value and the default.
+ fn decide(var: Option<&str>, default: bool) -> bool {
+     match var {
+@@ -264,9 +276,16 @@ fn guard_aliases(g: &mut Guards, pairs: &[(usize, usize)]) {
+ /// streamed textures and video planes through a pool view and maps the
+ /// pages into its tiled heap, where a guard sees none of it).
+ pub(crate) fn track(start: usize, len: usize, views: bool) -> Option<Tracked> {
+-    if len == 0 || !fault_tracking() || !runtime_memory(start, views) {
++    let scoped = !fault_tracking() && scoped_len() == Some(len);
++    if len == 0 || !(fault_tracking() || scoped) || !runtime_memory(start, views) {
++        if scoped {
++            tracing::warn!(start = format_args!("{start:#x}"), len, "scoped write tracking: not runtime memory, copied whole");
++        }
+         return None;
+     }
++    if scoped {
++        tracing::info!(start = format_args!("{start:#x}"), len, "scoped write tracking on for this host copy");
++    }
+     install();
+     let end = start + len;
+     let pages = start / PAGE..end.div_ceil(PAGE);
+@@ -549,10 +568,64 @@ fn changed_here(g: &mut Guards, first: usize, last: usize, save: bool) -> bool {
+     !guarded.is_empty()
+ }
+ 
++/// What the missed-write audit (`crate::shadow`, `VICTORY_TRACK_AUDIT`)
++/// found for one page.
++pub(crate) enum Audit {
++    /// Unchanged by the tracker's account, and the copy matches.
++    Same,
++    /// Differed, but a write marked the page during the compare.
++    Raced,
++    /// Differed while the tracker still called it unchanged: a missed
++    /// write (this many 32-bit words differ).
++    Missed(usize),
++    /// Under a range shaders may be writing: not compared.
++    Skipped,
++    /// Title memory could not be read there.
++    Unreadable,
++}
++
++static AUDIT: [std::sync::atomic::AtomicU64; 6] = [const { std::sync::atomic::AtomicU64::new(0) }; 6];
++
++pub(crate) fn audit_note(what: Audit, at: usize) {
++    use std::sync::atomic::Ordering::Relaxed;
++    let k = match what {
++        Audit::Same => 0,
++        Audit::Raced => 1,
++        Audit::Missed(words) => {
++            AUDIT[5].fetch_add(words as u64, Relaxed);
++            if AUDIT[2].load(Relaxed) < 50 {
++                let others: Vec<String> = guards()
++                    .alias_of
++                    .get(&(at / PAGE))
++                    .map(|o| o.iter().map(|p| format!("{:#x}", p * PAGE)).collect())
++                    .unwrap_or_default();
++                tracing::error!(page = format_args!("{at:#x}"), words, aliases = ?others, "track audit: MISSED WRITE");
++            }
++            2
++        }
++        Audit::Skipped => 3,
++        Audit::Unreadable => 4,
++    };
++    AUDIT[k].fetch_add(1, Relaxed);
++}
++
++/// The audit's running totals, once per presented frame when it ran.
++fn audit_report() {
++    use std::sync::atomic::Ordering::Relaxed;
++    let n: Vec<u64> = AUDIT.iter().map(|a| a.load(Relaxed)).collect();
++    if n[..5].iter().any(|&x| x > 0) {
++        tracing::info!(
++            same = n[0], raced = n[1], missed = n[2], missed_words = n[5], skipped = n[3], unreadable = n[4],
++            "track audit totals (64 KiB pages)"
++        );
++    }
++}
++
+ /// At each presented frame (diagnostics): counts the tracked pages written
+ /// in it, and those written the frame before too.
+ #[cfg(feature = "diagnostics")]
+ pub(crate) fn frame_done() {
++    audit_report();
+     let mut g = guards();
+     let written = std::mem::take(&mut g.written);
+     let again = written.intersection(&g.written_before).count();
+diff --git a/crates/victory-loader/src/lib.rs b/crates/victory-loader/src/lib.rs
+index 520d092dde9e7f6adcbcb6877d5c077dc36e9984..a9e47427699d2f69d02e0768c1e1a3de75ad2a59 100644
+--- a/crates/victory-loader/src/lib.rs
++++ b/crates/victory-loader/src/lib.rs
+@@ -23,6 +23,7 @@
+ 
+ #[cfg(windows)]
+ mod crash;
++pub mod masked;
+ pub mod prepare;
+ pub(crate) mod publish;
+ pub mod resolve;
+diff --git a/crates/victory-loader/src/masked.rs b/crates/victory-loader/src/masked.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..76ea4f50cebdf50dac3e742cbc6ffcb97424f472
+--- /dev/null
++++ b/crates/victory-loader/src/masked.rs
+@@ -0,0 +1,834 @@
++//! Finds the AVX masked stores in a title's code (`vpmaskmovd`,
++//! `vpmaskmovq`, `vmaskmovps` and `vmaskmovpd` to memory).
++//!
++//! Rosetta cannot resume one of these that faults partway (#14), so
++//! fault-based write tracking is off under Rosetta and every submission
++//! copies title memory whole: about 129 GB per frame once the world
++//! streams in (#50). Knowing where the title uses these stores is the
++//! first step to patching them so tracking can come back on. The scan
++//! reads bytes, not decoded instructions, so a match inside another
++//! instruction's bytes is possible, though rare.
++
++use victory_pe::ImageInfo;
++
++/// `IMAGE_SCN_MEM_EXECUTE`.
++const EXECUTE: u32 = 0x2000_0000;
++
++/// One masked store found.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct MaskedStore {
++    pub rva: u32,
++    pub kind: MaskedKind,
++    /// 256-bit (`ymm`) rather than 128-bit.
++    pub wide: bool,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum MaskedKind {
++    Vpmaskmovd,
++    Vpmaskmovq,
++    Vmaskmovps,
++    Vmaskmovpd,
++    /// Not masked, but a vector store Rosetta also cannot resume (#50).
++    Vcvtps2ph,
++    Vextractf128,
++    Vextracti128,
++}
++
++/// The masked store whose encoding starts at `at`, if one does: a
++/// three-byte VEX prefix (`c4`) in the 0F38 map with the 66 prefix, then
++/// opcode 8e (`vpmaskmov`, W picks d or q), 2e (`vmaskmovps`) or 2f
++/// (`vmaskmovpd`), and a memory operand.
++fn decode(code: &[u8], at: usize) -> Option<(MaskedKind, bool)> {
++    let &[c4, b1, b2, opcode, modrm] = code.get(at..at + 5)? else {
++        return None;
++    };
++    if c4 != 0xc4 || b2 & 3 != 1 || modrm >> 6 == 3 {
++        return None;
++    }
++    let w = b2 & 0x80 != 0;
++    let kind = match (b1 & 0x1f, opcode) {
++        (2, 0x8e) if w => MaskedKind::Vpmaskmovq,
++        (2, 0x8e) => MaskedKind::Vpmaskmovd,
++        (2, 0x2e) => MaskedKind::Vmaskmovps,
++        (2, 0x2f) => MaskedKind::Vmaskmovpd,
++        (3, 0x1d) if !w => MaskedKind::Vcvtps2ph,
++        (3, 0x19) if !w && b2 & 4 != 0 => MaskedKind::Vextractf128,
++        (3, 0x39) if !w && b2 & 4 != 0 => MaskedKind::Vextracti128,
++        _ => return None,
++    };
++    Some((kind, b2 & 4 != 0))
++}
++
++/// Every masked store in the executable sections of `bytes` (the image
++/// file `info` was parsed from), by RVA.
++pub fn masked_stores(info: &ImageInfo, bytes: &[u8]) -> Vec<MaskedStore> {
++    let mut found = Vec::new();
++    for s in info
++        .sections
++        .iter()
++        .filter(|s| s.characteristics & EXECUTE != 0)
++    {
++        let start = (s.file_offset as usize).min(bytes.len());
++        let end = start.saturating_add(s.file_size as usize).min(bytes.len());
++        let code = &bytes[start..end];
++        for at in 0..code.len() {
++            if let Some((kind, wide)) = decode(code, at) {
++                found.push(MaskedStore {
++                    rva: s.rva + at as u32,
++                    kind,
++                    wide,
++                });
++            }
++        }
++    }
++    found
++}
++
++/// One line for the start-up report: how many of each kind, and the first
++/// few RVAs.
++pub fn summary(found: &[MaskedStore]) -> String {
++    if found.is_empty() {
++        return "none in code".to_owned();
++    }
++    let count = |k| found.iter().filter(|f| f.kind == k).count();
++    let first: Vec<String> = found
++        .iter()
++        .take(16)
++        .map(|f| format!("{:#x}", f.rva))
++        .collect();
++    format!(
++        "{} in code (vpmaskmovd {}, vpmaskmovq {}, vmaskmovps {}, vmaskmovpd {}, vcvtps2ph {}, vextractf128 {}, vextracti128 {}), first at {}{}",
++        found.len(),
++        count(MaskedKind::Vpmaskmovd),
++        count(MaskedKind::Vpmaskmovq),
++        count(MaskedKind::Vmaskmovps),
++        count(MaskedKind::Vmaskmovpd),
++        count(MaskedKind::Vcvtps2ph),
++        count(MaskedKind::Vextractf128),
++        count(MaskedKind::Vextracti128),
++        first.join(" "),
++        if found.len() > 16 { " ..." } else { "" }
++    )
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn decodes_the_store_seen_in_the_rosetta_hang() {
++        // `vpmaskmovd [rax], ymm6, ymm4` from #1 and #50: c4 e2 45 8e 30.
++        assert_eq!(
++            decode(&[0xc4, 0xe2, 0x45, 0x8e, 0x30], 0),
++            Some((MaskedKind::Vpmaskmovd, true))
++        );
++        // W set: vpmaskmovq; 128-bit.
++        assert_eq!(
++            decode(&[0xc4, 0xe2, 0xc1, 0x8e, 0x30], 0),
++            Some((MaskedKind::Vpmaskmovq, false))
++        );
++        assert_eq!(
++            decode(&[0xc4, 0xe2, 0x45, 0x2e, 0x08], 0),
++            Some((MaskedKind::Vmaskmovps, true))
++        );
++        assert_eq!(
++            decode(&[0xc4, 0xe2, 0x45, 0x2f, 0x08], 0),
++            Some((MaskedKind::Vmaskmovpd, true))
++        );
++    }
++
++    #[test]
++    fn leaves_loads_registers_and_other_maps_alone() {
++        // The load forms (8c, 2c) are not stores.
++        assert_eq!(decode(&[0xc4, 0xe2, 0x45, 0x8c, 0x30], 0), None);
++        // A register operand (mod 3) is not a store to memory.
++        assert_eq!(decode(&[0xc4, 0xe2, 0x45, 0x8e, 0xf0], 0), None);
++        // The 0F map, or no 66 prefix.
++        assert_eq!(decode(&[0xc4, 0xe1, 0x45, 0x8e, 0x30], 0), None);
++        assert_eq!(decode(&[0xc4, 0xe2, 0x44, 0x8e, 0x30], 0), None);
++        // Too short.
++        assert_eq!(decode(&[0xc4, 0xe2, 0x45, 0x8e], 0), None);
++    }
++
++    #[test]
++    fn the_summary_counts_and_lists() {
++        let f = |rva, kind| MaskedStore {
++            rva,
++            kind,
++            wide: true,
++        };
++        let found = [
++            f(0x1000, MaskedKind::Vpmaskmovd),
++            f(0x2000, MaskedKind::Vmaskmovps),
++        ];
++        assert_eq!(
++            summary(&found),
++            "2 in code (vpmaskmovd 1, vpmaskmovq 0, vmaskmovps 1, vmaskmovpd 0, vcvtps2ph 0, vextractf128 0, vextracti128 0), first at 0x1000 0x2000"
++        );
++        assert_eq!(summary(&[]), "none in code");
++    }
++}
++
++/// A decoded masked store, enough to redo it with plain stores.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub(crate) struct Store {
++    /// Instruction length in bytes.
++    pub len: usize,
++    /// Lanes of 8 bytes (`q`, `pd`) rather than 4.
++    pub wide_lanes: bool,
++    /// 256-bit registers.
++    pub ymm: bool,
++    /// The mask register (VEX.vvvv) and the stored register (ModRM.reg).
++    pub mask: u8,
++    pub src: u8,
++    /// The memory operand: REX X and B, then ModRM, an optional SIB and
++    /// the displacement.
++    pub x: bool,
++    pub b: bool,
++    pub modrm: u8,
++    pub sib: Option<u8>,
++    pub disp: i32,
++    /// For an unmasked store (`vcvtps2ph`, `vextract*128`): the VEX
++    /// prefix's two bytes, the opcode, the immediate and the bytes stored.
++    pub plain: Option<(u8, u8, u8, u8, u8)>,
++}
++
++impl Store {
++    fn lanes(&self) -> usize {
++        match (self.ymm, self.wide_lanes) {
++            (true, false) => 8,
++            (true, true) | (false, false) => 4,
++            (false, true) => 2,
++        }
++    }
++    fn lane_bytes(&self) -> u8 {
++        if self.wide_lanes { 8 } else { 4 }
++    }
++    /// RIP-relative: ModRM mod 0, r/m 5.
++    fn rip_relative(&self) -> bool {
++        self.modrm >> 6 == 0 && self.modrm & 7 == 5
++    }
++    /// A SIB with no base (mod 0, base 5): an absolute disp32.
++    fn no_base(&self) -> bool {
++        self.modrm >> 6 == 0 && self.sib.is_some_and(|s| s & 7 == 5)
++    }
++    /// The base register is rsp.
++    fn rsp_base(&self) -> bool {
++        !self.b && self.sib.is_some_and(|s| s & 7 == 4)
++    }
++}
++
++/// Decodes the whole masked store at `at`: its operands and length.
++pub(crate) fn decode_store(code: &[u8], at: usize) -> Option<Store> {
++    let (kind, ymm) = decode(code, at)?;
++    let (b1, b2, modrm) = (code[at + 1], code[at + 2], code[at + 4]);
++    let mut len = 5;
++    let (md, rm) = (modrm >> 6, modrm & 7);
++    let sib = if rm == 4 {
++        len += 1;
++        Some(*code.get(at + 5)?)
++    } else {
++        None
++    };
++    let disp_len = match md {
++        1 => 1,
++        2 => 4,
++        _ if rm == 5 || sib.is_some_and(|s| s & 7 == 5) => 4,
++        _ => 0,
++    };
++    let bytes = code.get(at + len..at + len + disp_len)?;
++    let disp = match disp_len {
++        1 => i32::from(bytes[0] as i8),
++        4 => i32::from_le_bytes(bytes.try_into().ok()?),
++        _ => 0,
++    };
++    len += disp_len;
++    let plain = match kind {
++        MaskedKind::Vcvtps2ph | MaskedKind::Vextractf128 | MaskedKind::Vextracti128 => {
++            let imm = *code.get(at + len)?;
++            len += 1;
++            let bytes = if kind == MaskedKind::Vcvtps2ph && !ymm {
++                8
++            } else {
++                16
++            };
++            Some((b1, b2, code[at + 3], imm, bytes))
++        }
++        _ => None,
++    };
++    Some(Store {
++        plain,
++        len,
++        wide_lanes: matches!(kind, MaskedKind::Vpmaskmovq | MaskedKind::Vmaskmovpd),
++        ymm,
++        mask: !(b2 >> 3) & 0xf,
++        src: ((modrm >> 3) & 7) | if b1 & 0x80 == 0 { 8 } else { 0 },
++        x: b1 & 0x40 == 0,
++        b: b1 & 0x20 == 0,
++        modrm,
++        sib,
++        disp,
++    })
++}
++
++/// Bytes the stack moves before the trampoline's `lea`: rax, rcx, flags.
++const PUSHED: i32 = 24;
++
++/// The trampoline for `s`, placed at `at`, for the store at `site`: the
++/// same stores done one lane at a time with plain `mov`s (which Rosetta
++/// can resume after a fault), then a jump back past the store. Flags,
++/// rax, rcx and the vector registers are kept.
++pub(crate) fn trampoline(s: &Store, site: u64, at: u64) -> Option<Vec<u8>> {
++    let mut c = vec![0x50, 0x51, 0x9c]; // push rax; push rcx; pushfq
++    // lea rax, [operand]
++    c.push(0x48 | u8::from(s.x) << 1 | u8::from(s.b));
++    c.push(0x8d);
++    let rm = s.modrm & 7;
++    if s.rip_relative() {
++        c.push(rm); // mod 0, reg 0 (rax), r/m 5
++        let target = (site as i64) + s.len as i64 + i64::from(s.disp);
++        let next = at as i64 + c.len() as i64 + 4;
++        c.extend_from_slice(&i32::try_from(target - next).ok()?.to_le_bytes());
++    } else if s.no_base() {
++        c.push(rm);
++        c.push(s.sib?);
++        c.extend_from_slice(&s.disp.to_le_bytes());
++    } else {
++        // Always a disp32 form (mod 2), so rsp's shift always fits.
++        c.push(0x80 | rm);
++        if let Some(sib) = s.sib {
++            c.push(sib);
++        }
++        let disp = if s.rsp_base() {
++            s.disp.checked_add(PUSHED)?
++        } else {
++            s.disp
++        };
++        c.extend_from_slice(&disp.to_le_bytes());
++    }
++    if let Some((b1, b2, opcode, imm, bytes)) = s.plain {
++        // The same instruction into [rsp] (X and B cleared, ModRM.reg
++        // kept), then the bytes copied out 8 at a time with plain moves.
++        c.extend_from_slice(&[0x48, 0x83, 0xec, 0x20]); // sub rsp, 32
++        c.extend_from_slice(&[
++            0xc4,
++            b1 | 0x60,
++            b2,
++            opcode,
++            0x40 | (s.modrm & 0x38) | 4,
++            0x24,
++            0,
++            imm,
++        ]);
++        for k in 0..bytes / 8 {
++            c.extend_from_slice(&[0x48, 0x8b, 0x4c, 0x24, k * 8]); // mov rcx, [rsp + 8k]
++            c.extend_from_slice(&[0x48, 0x89, 0x48, k * 8]); // mov [rax + 8k], rcx
++        }
++        c.extend_from_slice(&[0x48, 0x83, 0xc4, 0x20]); // add rsp, 32
++        return tail(c, site, s.len, at);
++    }
++    c.extend_from_slice(&[0x48, 0x83, 0xec, 0x40]); // sub rsp, 64
++    // vmovdqu [rsp], mask; vmovdqu [rsp + 32], src (F3 0F 7F /r).
++    for (reg, disp) in [(s.mask, None), (s.src, Some(0x20u8))] {
++        c.push(0xc4);
++        c.push(if reg & 8 == 0 { 0x80 } else { 0 } | 0x60 | 0x01);
++        c.push(0x78 | if s.ymm { 4 } else { 0 } | 0x02);
++        c.push(0x7f);
++        c.push(if disp.is_some() { 0x40 } else { 0 } | (reg & 7) << 3 | 4);
++        c.push(0x24);
++        if let Some(d) = disp {
++            c.push(d);
++        }
++    }
++    let (n, size) = (s.lanes(), s.lane_bytes());
++    let rex = if size == 8 { Some(0x48) } else { None };
++    for i in 0..n as u8 {
++        let off = i * size;
++        // mov ecx/rcx, [rsp + off]; test; jns skip
++        c.extend(rex);
++        c.extend_from_slice(&[0x8b, 0x4c, 0x24, off]);
++        c.extend(rex);
++        c.extend_from_slice(&[0x85, 0xc9]);
++        // The two moves after the jump.
++        let skip = 2 * u8::from(rex.is_some()) + 7;
++        c.extend_from_slice(&[0x79, skip]);
++        // mov ecx/rcx, [rsp + 32 + off]; mov [rax + off], ecx/rcx
++        c.extend(rex);
++        c.extend_from_slice(&[0x8b, 0x4c, 0x24, 0x20 + off]);
++        c.extend(rex);
++        c.extend_from_slice(&[0x89, 0x48, off]);
++    }
++    c.extend_from_slice(&[0x48, 0x83, 0xc4, 0x40]); // add rsp, 64
++    tail(c, site, s.len, at)
++}
++
++/// Restores flags, rcx and rax, and jumps back past the store.
++fn tail(mut c: Vec<u8>, site: u64, len: usize, at: u64) -> Option<Vec<u8>> {
++    c.extend_from_slice(&[0x9d, 0x59, 0x58]); // popfq; pop rcx; pop rax
++    let back = (site as i64) + len as i64;
++    let next = at as i64 + c.len() as i64 + 5;
++    c.push(0xe9);
++    c.extend_from_slice(&i32::try_from(back - next).ok()?.to_le_bytes());
++    Some(c)
++}
++
++/// The bytes that replace the store at `site`: a jump to `to`, then
++/// `nop`s to the store's length.
++pub(crate) fn jump(site: u64, len: usize, to: u64) -> Option<Vec<u8>> {
++    let rel = i32::try_from(to as i64 - (site as i64 + 5)).ok()?;
++    let mut c = vec![0xe9];
++    c.extend_from_slice(&rel.to_le_bytes());
++    c.resize(len.max(5), 0x90);
++    Some(c)
++}
++
++/// Patches the masked stores of the image mapped at `base` that `wanted`
++/// picks (by RVA) to jump to trampolines of plain stores, and returns how
++/// many it patched. Before any title thread runs.
++#[cfg(windows)]
++pub fn patch(base: u64, info: &ImageInfo, file: &[u8], wanted: impl Fn(u32) -> bool) -> usize {
++    use windows_sys::Win32::System::Diagnostics::Debug::FlushInstructionCache;
++    use windows_sys::Win32::System::Memory::{
++        MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
++        VirtualAlloc, VirtualProtect,
++    };
++    use windows_sys::Win32::System::Threading::GetCurrentProcess;
++    let stores: Vec<(u32, Store)> = masked_stores(info, file)
++        .into_iter()
++        .filter(|m| wanted(m.rva))
++        .filter_map(|m| {
++            let section = info
++                .sections
++                .iter()
++                .find(|s| s.rva <= m.rva && m.rva < s.rva + s.file_size)?;
++            let at = (section.file_offset + (m.rva - section.rva)) as usize;
++            Some((m.rva, decode_store(file, at)?))
++        })
++        .collect();
++    if stores.is_empty() {
++        return 0;
++    }
++    // Trampolines within reach of a rel32 jump: below the image first.
++    const SIZE: usize = 1 << 20;
++    let mut pool = std::ptr::null_mut();
++    for step in 1..2048u64 {
++        let Some(want) = base.checked_sub(step << 20) else {
++            break;
++        };
++        // SAFETY: a plain reservation at a hint; failure returns null.
++        pool = unsafe {
++            VirtualAlloc(
++                want as *const _,
++                SIZE,
++                MEM_RESERVE | MEM_COMMIT,
++                PAGE_READWRITE,
++            )
++        };
++        if !pool.is_null() {
++            break;
++        }
++    }
++    if pool.is_null() {
++        tracing::warn!("no memory near the image for masked store trampolines");
++        return 0;
++    }
++    let mut used = 0usize;
++    let mut patched = 0;
++    for (rva, store) in &stores {
++        let site = base + u64::from(*rva);
++        let at = pool as u64 + used as u64;
++        let (Some(code), Some(jump)) = (trampoline(store, site, at), jump(site, store.len, at))
++        else {
++            tracing::warn!(rva = format_args!("{rva:#x}"), "masked store out of reach");
++            continue;
++        };
++        if used + code.len() > SIZE {
++            break;
++        }
++        let mut old = 0;
++        // SAFETY: our pool has room for the code; the site is the title's
++        // code, writable for the moment of the write, before any title
++        // thread runs.
++        unsafe {
++            std::ptr::copy_nonoverlapping(code.as_ptr(), at as *mut u8, code.len());
++            if VirtualProtect(
++                site as *const _,
++                jump.len(),
++                PAGE_EXECUTE_READWRITE,
++                &mut old,
++            ) == 0
++            {
++                continue;
++            }
++            std::ptr::copy_nonoverlapping(jump.as_ptr(), site as *mut u8, jump.len());
++            VirtualProtect(site as *const _, jump.len(), old, &mut old);
++        }
++        used = (used + code.len() + 15) & !15;
++        patched += 1;
++    }
++    let mut old = 0;
++    // SAFETY: our pool; the whole image range for the cache flush.
++    unsafe {
++        VirtualProtect(pool, SIZE, PAGE_EXECUTE_READ, &mut old);
++        FlushInstructionCache(GetCurrentProcess(), std::ptr::null(), 0);
++    }
++    patched
++}
++
++/// Which RVAs `VICTORY_PATCH_MASKED` asks to patch: `all`, or a comma
++/// list of hex RVAs. Nothing when unset.
++pub fn wanted_from(value: Option<&str>) -> impl Fn(u32) -> bool + use<> {
++    // `@path`: a file of hex RVAs, one per line (a list checked against a
++    // real disassembly, so no byte-scan false match is patched).
++    let listed = value
++        .and_then(|v| v.strip_prefix('@'))
++        .map(|path| std::fs::read_to_string(path).unwrap_or_default().split_whitespace().collect::<Vec<_>>().join(","));
++    let value = listed.as_deref().or(value);
++    let (all, list): (bool, Vec<u32>) = match value {
++        Some("all") => (true, Vec::new()),
++        Some(v) => (
++            false,
++            v.split(',')
++                .filter_map(|x| u32::from_str_radix(x.trim().trim_start_matches("0x"), 16).ok())
++                .collect(),
++        ),
++        None => (false, Vec::new()),
++    };
++    move |rva| all || list.contains(&rva)
++}
++
++#[cfg(test)]
++mod patch_tests {
++    use super::*;
++
++    #[test]
++    fn stores_decode_with_their_operands_and_length() {
++        // The store from the Rosetta hang (#1): VEX.vvvv 1000 is mask ymm7,
++        // ModRM.reg 6 the stored ymm6.
++        let s = decode_store(&[0xc4, 0xe2, 0x45, 0x8e, 0x30], 0).unwrap();
++        assert_eq!(
++            (s.len, s.mask, s.src, s.ymm, s.wide_lanes),
++            (5, 7, 6, true, false)
++        );
++        // vpmaskmovd [rsp+0x10], ymm1, ymm2: SIB and disp8.
++        let s = decode_store(&[0xc4, 0xe2, 0x75, 0x8e, 0x54, 0x24, 0x10], 0).unwrap();
++        assert_eq!((s.len, s.disp, s.rsp_base()), (7, 0x10, true));
++        // vmaskmovpd [rip+0x100], xmm1, xmm2: RIP-relative disp32.
++        let s = decode_store(&[0xc4, 0xe2, 0x71, 0x2f, 0x15, 0, 1, 0, 0], 0).unwrap();
++        assert_eq!(
++            (s.len, s.disp, s.rip_relative(), s.lanes()),
++            (9, 0x100, true, 2)
++        );
++    }
++
++    #[test]
++    fn the_store_from_the_second_hang_decodes() {
++        // vcvtps2ph [r8+rdx*2], ymm0, 3 from run 11 in #50.
++        let s = decode_store(&[0xc4, 0xc3, 0x7d, 0x1d, 0x04, 0x50, 0x03], 0).unwrap();
++        assert_eq!(
++            (s.len, s.b, s.x, s.sib, s.plain.map(|p| (p.3, p.4))),
++            (7, true, false, Some(0x50), Some((3, 16)))
++        );
++    }
++
++    #[test]
++    fn the_jump_pads_to_the_store_length() {
++        assert_eq!(
++            jump(0x1000, 7, 0x2000).unwrap(),
++            vec![0xe9, 0xfb, 0x0f, 0, 0, 0x90, 0x90]
++        );
++        assert!(jump(0, 5, 1 << 40).is_none());
++    }
++
++    #[test]
++    fn the_list_picks_rvas() {
++        let w = wanted_from(Some("1dac734,0x10"));
++        assert!(w(0x1dac734) && w(0x10) && !w(0x11));
++        assert!(wanted_from(Some("all"))(5));
++        assert!(!wanted_from(None)(5));
++    }
++
++    /// Real code with a masked store, run as written and then patched:
++    /// both write the same lanes. Needs a CPU (or Rosetta) with AVX2.
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    #[test]
++    fn a_patched_store_writes_what_the_store_did() {
++        use windows_sys::Win32::System::Memory::*;
++        // f(dst rcx, mask rdx, src r8): vmovdqu ymm1, [rdx]; vmovdqu ymm2,
++        // [r8]; <store>; vzeroupper; ret.
++        let cases: [&[u8]; 7] = [
++            &[0xc4, 0xe2, 0x75, 0x8e, 0x11],       // vpmaskmovd [rcx], ymm1, ymm2
++            &[0xc4, 0xe2, 0xf5, 0x8e, 0x51, 0x08], // vpmaskmovq [rcx+8], ymm1, ymm2
++            &[0xc4, 0xe2, 0x71, 0x2e, 0x54, 0x01, 0x04], // vmaskmovps [rcx+rax+4], xmm1, xmm2 (rax 0)
++            &[0xc4, 0xe3, 0x7d, 0x1d, 0x09, 0x00],       // vcvtps2ph [rcx], ymm1, 0
++            &[0xc4, 0xe3, 0x79, 0x1d, 0x49, 0x04, 0x03], // vcvtps2ph [rcx+4], xmm1, 3
++            &[0xc4, 0xe3, 0x7d, 0x19, 0x49, 0x10, 0x01], // vextractf128 [rcx+16], ymm1, 1
++            &[0xc4, 0xe3, 0x7d, 0x39, 0x09, 0x01],       // vextracti128 [rcx], ymm1, 1
++        ];
++        for (k, store) in cases.into_iter().enumerate() {
++            let mut code = vec![
++                0x31, 0xc0, 0xc5, 0xfe, 0x6f, 0x0a, 0xc4, 0xc1, 0x7e, 0x6f, 0x10,
++            ];
++            let site_at = code.len();
++            code.extend_from_slice(store);
++            code.extend_from_slice(&[0xc5, 0xf8, 0x77, 0xc3]);
++            let run = |patch: bool| -> [u32; 12] {
++                // SAFETY: our own executable page, written then run.
++                unsafe {
++                    let page = VirtualAlloc(
++                        std::ptr::null(),
++                        1 << 16,
++                        MEM_RESERVE | MEM_COMMIT,
++                        PAGE_EXECUTE_READWRITE,
++                    ) as *mut u8;
++                    std::ptr::copy_nonoverlapping(code.as_ptr(), page, code.len());
++                    if patch {
++                        let s = decode_store(&code, site_at).unwrap();
++                        let site = page as u64 + site_at as u64;
++                        let at = page as u64 + 0x1000;
++                        let t = trampoline(&s, site, at).unwrap();
++                        std::ptr::copy_nonoverlapping(t.as_ptr(), at as *mut u8, t.len());
++                        let j = jump(site, s.len, at).unwrap();
++                        std::ptr::copy_nonoverlapping(j.as_ptr(), site as *mut u8, j.len());
++                    }
++                    let f: extern "win64" fn(*mut u32, *const u32, *const u32) =
++                        std::mem::transmute(page);
++                    let mask: [u32; 8] = [
++                        0x8000_0000,
++                        0,
++                        0xffff_ffff,
++                        0,
++                        0,
++                        0x8000_0000,
++                        0x8000_0000,
++                        1,
++                    ];
++                    let src: [u32; 8] = [11, 22, 33, 44, 55, 66, 77, 88];
++                    let mut dst = [7u32; 12];
++                    f(dst.as_mut_ptr(), mask.as_ptr(), src.as_ptr());
++                    VirtualFree(page.cast(), 0, MEM_RELEASE);
++                    dst
++                }
++            };
++            let (plain, patched) = (run(false), run(true));
++            assert_eq!(plain, patched, "case {k}");
++            assert_ne!(plain, [7u32; 12], "case {k} wrote something");
++        }
++    }
++
++    /// The point of the patch: a patched store into a read-only page
++    /// faults on a plain store, a handler makes the page writable, and the
++    /// store resumes. The original masked store would hang Rosetta here
++    /// (#14), so it is never run this way.
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    #[test]
++    fn a_patched_store_resumes_after_a_write_fault() {
++        use windows_sys::Win32::Foundation::EXCEPTION_ACCESS_VIOLATION;
++        use windows_sys::Win32::System::Diagnostics::Debug::*;
++        use windows_sys::Win32::System::Memory::*;
++        static PAGE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++        unsafe extern "system" fn unguard(info: *mut EXCEPTION_POINTERS) -> i32 {
++            // SAFETY: the system passes valid pointers.
++            unsafe {
++                let r = &*(*info).ExceptionRecord;
++                let page = PAGE.load(std::sync::atomic::Ordering::Relaxed);
++                if r.ExceptionCode == EXCEPTION_ACCESS_VIOLATION
++                    && (r.ExceptionInformation[1] & !0xfff) == page
++                {
++                    let mut old = 0;
++                    VirtualProtect(page as *const _, 0x1000, PAGE_READWRITE, &mut old);
++                    return -1; // EXCEPTION_CONTINUE_EXECUTION
++                }
++            }
++            0
++        }
++        let store = [0xc4, 0xe2, 0x75, 0x8e, 0x11]; // vpmaskmovd [rcx], ymm1, ymm2
++        let mut code = vec![0xc5, 0xfe, 0x6f, 0x0a, 0xc4, 0xc1, 0x7e, 0x6f, 0x10];
++        let site_at = code.len();
++        code.extend_from_slice(&store);
++        code.extend_from_slice(&[0xc5, 0xf8, 0x77, 0xc3]);
++        // SAFETY: our own pages and handler.
++        unsafe {
++            let exec = VirtualAlloc(
++                std::ptr::null(),
++                1 << 16,
++                MEM_RESERVE | MEM_COMMIT,
++                PAGE_EXECUTE_READWRITE,
++            ) as *mut u8;
++            std::ptr::copy_nonoverlapping(code.as_ptr(), exec, code.len());
++            let s = decode_store(&code, site_at).unwrap();
++            let site = exec as u64 + site_at as u64;
++            let at = exec as u64 + 0x1000;
++            let t = trampoline(&s, site, at).unwrap();
++            std::ptr::copy_nonoverlapping(t.as_ptr(), at as *mut u8, t.len());
++            let j = jump(site, s.len, at).unwrap();
++            std::ptr::copy_nonoverlapping(j.as_ptr(), site as *mut u8, j.len());
++            let data = VirtualAlloc(
++                std::ptr::null(),
++                0x1000,
++                MEM_RESERVE | MEM_COMMIT,
++                PAGE_READONLY,
++            ) as *mut u32;
++            PAGE.store(data as usize, std::sync::atomic::Ordering::Relaxed);
++            let handler = AddVectoredExceptionHandler(1, Some(unguard));
++            let f: extern "win64" fn(*mut u32, *const u32, *const u32) = std::mem::transmute(exec);
++            let mask: [u32; 8] = [0, 0x8000_0000, 0, 0, 0, 0, 0, 0x8000_0000];
++            let src: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
++            f(data, mask.as_ptr(), src.as_ptr());
++            RemoveVectoredExceptionHandler(handler);
++            let got = std::slice::from_raw_parts(data, 8).to_vec();
++            assert_eq!(got, vec![0, 2, 0, 0, 0, 0, 0, 8]);
++            VirtualFree(data.cast(), 0, MEM_RELEASE);
++            VirtualFree(exec.cast(), 0, MEM_RELEASE);
++        }
++    }
++
++    /// The stores the crossing reproducer runs: `[rcx]` destination, mask
++    /// (or source for the unmasked kinds) in ymm1, source in ymm2.
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    const CROSSING: [(&str, &[u8]); 6] = [
++        ("vpmaskmovd ymm", &[0xc4, 0xe2, 0x75, 0x8e, 0x11]),
++        ("vpmaskmovq ymm", &[0xc4, 0xe2, 0xf5, 0x8e, 0x11]),
++        ("vmaskmovps ymm", &[0xc4, 0xe2, 0x75, 0x2e, 0x11]),
++        ("vmaskmovpd ymm", &[0xc4, 0xe2, 0x75, 0x2f, 0x11]),
++        ("vcvtps2ph ymm", &[0xc4, 0xe3, 0x7d, 0x1d, 0x09, 0x00]),
++        ("vextractf128", &[0xc4, 0xe3, 0x7d, 0x19, 0x09, 0x01]),
++    ];
++
++    /// Guard state for the crossing reproducer: the 64 KiB block made
++    /// read-only (as `victory-gpu/src/watch.rs` guards title memory) and
++    /// how many write faults opened it.
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    static GUARDED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    static FAULTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    unsafe extern "system" fn open_block(
++        info: *mut windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
++    ) -> i32 {
++        use std::sync::atomic::Ordering::SeqCst;
++        use windows_sys::Win32::Foundation::EXCEPTION_ACCESS_VIOLATION;
++        use windows_sys::Win32::System::Memory::{PAGE_READWRITE, VirtualProtect};
++        // SAFETY: the system passes the exception being dispatched.
++        unsafe {
++            let r = &*(*info).ExceptionRecord;
++            let block = GUARDED.load(SeqCst);
++            let at = r.ExceptionInformation[1];
++            if r.ExceptionCode == EXCEPTION_ACCESS_VIOLATION
++                && r.ExceptionInformation[0] == 1
++                && block != 0
++                && (block..block + 0x10000).contains(&at)
++            {
++                let mut old = 0;
++                VirtualProtect(block as *const _, 0x10000, PAGE_READWRITE, &mut old);
++                FAULTS.fetch_add(1, SeqCst);
++                return -1; // EXCEPTION_CONTINUE_EXECUTION
++            }
++        }
++        0
++    }
++
++    /// Code for `f(dst rcx, mask rdx, src r8)`: loads ymm1 and ymm2, runs
++    /// `store`, and returns; patched with the real trampoline when asked.
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    unsafe fn crossing_code(store: &[u8], patch: bool) -> *mut u8 {
++        use windows_sys::Win32::System::Memory::*;
++        let mut code = vec![0x31, 0xc0, 0xc5, 0xfe, 0x6f, 0x0a, 0xc4, 0xc1, 0x7e, 0x6f, 0x10];
++        let site_at = code.len();
++        code.extend_from_slice(store);
++        code.extend_from_slice(&[0xc5, 0xf8, 0x77, 0xc3]);
++        // SAFETY: our own executable pages, written before they run.
++        unsafe {
++            let exec = VirtualAlloc(std::ptr::null(), 1 << 16, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE) as *mut u8;
++            std::ptr::copy_nonoverlapping(code.as_ptr(), exec, code.len());
++            if patch {
++                let s = decode_store(&code, site_at).expect("decodes");
++                let site = exec as u64 + site_at as u64;
++                let at = exec as u64 + 0x1000;
++                let t = trampoline(&s, site, at).expect("trampoline");
++                std::ptr::copy_nonoverlapping(t.as_ptr(), at as *mut u8, t.len());
++                let j = jump(site, s.len, at).expect("jump");
++                std::ptr::copy_nonoverlapping(j.as_ptr(), site as *mut u8, j.len());
++            }
++            exec
++        }
++    }
++
++    /// Runs `store` with its destination `back` bytes before the start of
++    /// a 64 KiB block, the block guarded when `guard`; returns the 64 bytes
++    /// around the boundary and the faults taken.
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    unsafe fn crossing_run(store: &[u8], patch: bool, back: usize, guard: bool) -> ([u8; 64], usize) {
++        use std::sync::atomic::Ordering::SeqCst;
++        use windows_sys::Win32::System::Diagnostics::Debug::*;
++        use windows_sys::Win32::System::Memory::*;
++        // SAFETY: our own pages and handler.
++        unsafe {
++            let exec = crossing_code(store, patch);
++            let data = VirtualAlloc(std::ptr::null(), 2 << 16, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) as *mut u8;
++            std::ptr::write_bytes(data, 0x5a, 2 << 16);
++            let block = data.add(1 << 16);
++            FAULTS.store(0, SeqCst);
++            let handler = AddVectoredExceptionHandler(1, Some(open_block));
++            if guard {
++                let mut old = 0;
++                assert_ne!(VirtualProtect(block.cast(), 1 << 16, PAGE_READONLY, &mut old), 0);
++                GUARDED.store(block as usize, SeqCst);
++            }
++            let f: extern "win64" fn(*mut u8, *const u32, *const u32) = std::mem::transmute(exec);
++            let mask = [0x8000_0000u32; 8];
++            let src: [u32; 8] = [0x3f80_0001, 0x4000_0002, 0x4040_0003, 0x4080_0004, 0x40a0_0005, 0x40c0_0006, 0x40e0_0007, 0x4100_0008];
++            f(block.sub(back), mask.as_ptr(), src.as_ptr());
++            GUARDED.store(0, SeqCst);
++            RemoveVectoredExceptionHandler(handler);
++            let mut around = [0u8; 64];
++            std::ptr::copy_nonoverlapping(block.sub(32), around.as_mut_ptr(), 64);
++            VirtualFree(data.cast(), 0, MEM_RELEASE);
++            VirtualFree(exec.cast(), 0, MEM_RELEASE);
++            (around, FAULTS.load(SeqCst))
++        }
++    }
++
++    /// The Rosetta hang (#1, #50): a store that starts in writable memory
++    /// and runs into a guarded block. Patched, every kind at every 4-byte
++    /// offset over the boundary writes exactly what the original store
++    /// writes into unguarded memory, taking the fault a plain store takes.
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    #[test]
++    fn patched_stores_crossing_into_a_guarded_block_resume() {
++        let mut crossing_cases = 0;
++        for (name, store) in CROSSING {
++            for back in (4..=32).step_by(4) {
++                // SAFETY: test-owned memory and code.
++                let (want, _) = unsafe { crossing_run(store, false, back, false) };
++                let (got, faults) = unsafe { crossing_run(store, true, back, true) };
++                assert_eq!(got, want, "{name}, {back} bytes before the guarded block");
++                let wrote_past = want[32..].iter().any(|&b| b != 0x5a);
++                assert_eq!(faults > 0, wrote_past, "{name}, {back} bytes before: faults {faults}");
++                crossing_cases += usize::from(wrote_past);
++                println!("{name:16} start -{back:2}: {} bytes compared, {faults} fault(s), crossing {wrote_past}", got.len());
++            }
++        }
++        println!("{crossing_cases} crossing cases resumed and matched");
++        assert!(crossing_cases >= 20);
++    }
++
++    /// The unpatched original of the reproducer (`REPRO_KIND` picks the
++    /// store, 0 = vpmaskmovd): under Rosetta this hangs with "unexpectedly
++    /// need to EmulateForward on a synchronous exception". Run alone, with
++    /// a timeout.
++    #[cfg(all(windows, target_arch = "x86_64"))]
++    #[test]
++    #[ignore]
++    fn unpatched_store_crossing_into_a_guarded_block() {
++        let kind: usize = std::env::var("REPRO_KIND").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
++        let (name, store) = CROSSING[kind];
++
++        // SAFETY: test-owned memory and code.
++        let back = if store[2] & 0x04 != 0 && matches!(store[3], 0x1d | 0x19) { 8 } else { 16 };
++        let (_, faults) = unsafe { crossing_run(store, false, back, true) };
++        println!("unpatched {name} finished with {faults} fault(s)");
++    }
++}

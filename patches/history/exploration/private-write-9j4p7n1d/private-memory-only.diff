@@ -1,0 +1,190 @@
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -1881,8 +1881,9 @@
+                         add(C::Copies, 1);
+                         add(C::CopyBytes, len as u64);
+                     }
+-                    batch.title_written();
+-                    copy_mapped(dst as *mut u8, src as *const u8, len, true);
++                    batch.copy_to_title(dst, len, || {
++                        copy_mapped(dst as *mut u8, src as *const u8, len, true);
++                    });
+                     len
+                 }
+                 &Step::Fill(dst, src, len) => {
+@@ -2033,6 +2034,32 @@
+         self.buffers.clear();
+     }
+ 
++    /// Preserve only disjoint coverage after a known private-memory write.
++    /// Pagefile-backed texture views can alias arbitrary title addresses and
++    /// retain the conservative invalidation, as does unknown host work.
++    fn copy_to_title(&mut self, address: usize, len: usize, copy: impl FnOnce()) {
++        self.flush();
++        self.textures.clear();
++        if self.buffers.is_empty() {
++            copy();
++            return;
++        }
++        let generation = crate::watch::mapping_generation();
++        let private = private_write_range(address, len);
++        copy();
++        if private && generation == crate::watch::mapping_generation() && private_write_range(address, len) {
++            let end = address + len;
++            for (shadow, ranges) in self.buffers.values_mut() {
++                let (base, size) = shadow.range();
++                if address < (base + size) as usize && (base as usize) < end {
++                    ranges.invalidate(address, end);
++                }
++            }
++        } else {
++            self.buffers.clear();
++        }
++    }
++
+     fn finish(mut self) {
+         self.flush();
+         // All preparation (including title copies) precedes GPU execution.
+@@ -2093,6 +2120,21 @@
+         self.uploads.clear();
+         copied
+     }
++}
++
++/// A single committed private region with stable writable protection.
++fn private_write_range(address: usize, len: usize) -> bool {
++    use windows_sys::Win32::System::Memory::{
++        MEM_COMMIT, MEM_PRIVATE, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READWRITE,
++        PAGE_READWRITE, VirtualQuery,
++    };
++    let Some(end) = address.checked_add(len) else { return false };
++    let mut info = MEMORY_BASIC_INFORMATION::default();
++    // SAFETY: only queries metadata; info is writable for the requested size.
++    let n = unsafe { VirtualQuery(address as *const _, &mut info, size_of_val(&info)) };
++    n != 0 && info.State == MEM_COMMIT && info.Type == MEM_PRIVATE
++        && matches!(info.Protect, PAGE_READWRITE | PAGE_EXECUTE_READWRITE)
++        && (info.BaseAddress as usize).saturating_add(info.RegionSize) >= end
+ }
+ 
+ /// Copies title memory at submission. The ranges were checked against their
+@@ -3325,6 +3367,53 @@
+         crate::shadow::unregister(p, p as u64);
+     }
+ 
++    #[test]
++    fn a_private_write_only_reloads_its_bytes_but_a_shared_write_reloads_aliases() {
++        let mut title = vec![0u32; 4 << 20];
++        let p = title.as_mut_ptr() as usize;
++        let len = title.len() * 4;
++        assert!(super::private_write_range(p, len));
++        crate::shadow::register(p, p as u64, len as u64);
++        let shadow = crate::shadow::find(p as u64, len as u64).expect("host device");
++        for selective in [false, true] {
++            let mut b = Batch::default();
++            b.add(&shadow, p, len);
++            b.flush();
++            let start = std::time::Instant::now();
++            let mut copied = 0;
++            for i in 0..64 {
++                let word = 512 + 1001 * i;
++                if selective {
++                    b.copy_to_title(p + 4 * word, 4, || title[word] = 73);
++                } else {
++                    b.title_written();
++                    title[word] = 32;
++                }
++                b.add(&shadow, p, len);
++                copied += b.flush();
++                assert_eq!(shadow.read_host((p + word * 4) as u64, 1), [title[word]]);
++            }
++            println!("private write selective={selective}: {copied} bytes in {:?}", start.elapsed());
++            assert_eq!(copied, if selective { 64 * 4 } else { 64 * len });
++        }
++        crate::shadow::unregister(p, p as u64);
++        let (a, alias) = crate::watch::tests::twin_views(1);
++        assert!(!super::private_write_range(alias, 4));
++        crate::shadow::register(a, a as u64, 4);
++        let shadow = crate::shadow::find(a as u64, 4).expect("host device");
++        let mut b = Batch::default();
++        b.add(&shadow, a, 4);
++        b.flush();
++        b.copy_to_title(alias, 4, || {
++            // SAFETY: the test owns the writable alias.
++            unsafe { (alias as *mut u32).write(84) };
++        });
++        b.add(&shadow, a, 4);
++        assert_eq!(b.flush(), 4);
++        assert_eq!(shadow.read_host(a as u64, 1), [84]);
++        crate::shadow::unregister(a, a as u64);
++    }
++
+     /// The hashing a submission does for textures in physical-page memory,
+     /// with every list checking the textures it samples (before) and with
+     /// each checked once (after). Run with
+--- a/crates/victory-gpu/src/host/refresh.rs
++++ b/crates/victory-gpu/src/host/refresh.rs
+@@ -31,6 +31,20 @@
+         let was_empty = self.requested.is_empty();
+         self.requested.push((from, to));
+         was_empty
++    }
++
++    /// Subtract a title write from sorted, disjoint current coverage.
++    pub(crate) fn invalidate(&mut self, from: usize, to: usize) {
++        debug_assert!(self.requested.is_empty());
++        if from >= to { return; }
++        let first = self.current.partition_point(|&(_, end)| end <= from);
++        let last = first + self.current[first..].partition_point(|&(start, _)| start < to);
++        if first == last { return; }
++        let start = self.current[first].0;
++        let end = self.current[last - 1].1;
++        let left = (start < from).then_some((start, from));
++        let right = (to < end).then_some((to, end));
++        self.current.splice(first..last, left.into_iter().chain(right));
+     }
+ 
+     pub(crate) fn flush(&mut self, runs: &mut Vec<Span>, mut copy: impl FnMut(usize, usize)) {
+@@ -150,6 +164,20 @@
+     }
+ 
+     #[test]
++    fn private_writes_invalidate_only_overlapping_coverage() {
++        let mut r = Ranges::default();
++        r.request(10, 50);
++        r.request(100, 25);
++        flush(&mut r);
++        r.invalidate(30, 40);
++        r.invalidate(58, 105);
++        r.invalidate(200, 203);
++        r.request(10, 50);
++        r.request(100, 25);
++        assert_eq!(flush(&mut r), [(30,40), (58,60), (100,105)]);
++    }
++
++    #[test]
+     fn intersecting_requests_only_copy_each_missing_byte_once() {
+         let mut r = Ranges::default();
+         assert!(r.request(40, 2));
+--- a/crates/victory-gpu/src/watch.rs
++++ b/crates/victory-gpu/src/watch.rs
+@@ -599,6 +599,7 @@
+ /// The runtime mapped or unmapped title memory `[at, at + len)`: what it
+ /// shows is new, and read-write.
+ pub fn title_memory_remapped(at: usize, len: usize) {
++    MAPPING_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+     let (first, last) = (at / PAGE, at.saturating_add(len).div_ceil(PAGE));
+     let mut g = guards();
+     // What it showed is gone already: nothing to keep.
+@@ -635,6 +636,12 @@
+     if others.iter().any(|&o| g.protected.contains(&(o / PAGE))) {
+         protect(&mut g, &[page]);
+     }
++}
++
++static MAPPING_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++pub(crate) fn mapping_generation() -> u64 {
++    MAPPING_GENERATION.load(std::sync::atomic::Ordering::SeqCst)
+ }
+ 
+ /// Registers the handler that takes writes to guarded blocks, once, ahead

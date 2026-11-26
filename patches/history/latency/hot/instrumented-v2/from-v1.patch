@@ -1,0 +1,137 @@
+--- a/crates/victory-gpu/src/host/latency.rs
++++ b/crates/victory-gpu/src/host/latency.rs
+@@ -24,15 +24,52 @@
+ pub(crate) fn recording() -> bool {
+     !mode().is_empty() && offset().is_some_and(|n| n < 62)
+ }
+-pub(crate) fn xmem_enabled() -> bool {
+-    match mode() {
+-        "on" => true,
+-        "abba" | "baab" => offset().is_some_and(|n|
+-            n >= 8 && (matches!(((n - 8) / 2) % 4, 1 | 2) == (mode() == "abba"))),
+-        "off" => false,
+-        _ => {
+-            static DEFAULT: OnceLock<bool> = OnceLock::new();
+-            *DEFAULT.get_or_init(|| crate::switch::on("VICTORY_XMEM_VIEW_READ"))
+-        },
++fn crossover(mode: &str, offset: Option<u64>) -> Option<bool> {
++    match mode {
++        "on" => Some(true),
++        "off" => Some(false),
++        "abba" | "baab" => Some(offset.is_some_and(|n| {
++            n >= 8 && (matches!(((n - 8) / 2) % 4, 1 | 2) == (mode == "abba"))
++        })),
++        _ => None,
+     }
+ }
++
++fn testing_snapshots() -> bool {
++    static SNAPSHOTS: OnceLock<bool> = OnceLock::new();
++    *SNAPSHOTS.get_or_init(|| std::env::var("VICTORY_LATENCY_SUBJECT").as_deref() == Ok("snapshots"))
++}
++
++pub(crate) fn xmem_enabled() -> bool {
++    static DEFAULT: OnceLock<bool> = OnceLock::new();
++    !testing_snapshots() && crossover(mode(), offset()).unwrap_or_else(|| {
++        *DEFAULT.get_or_init(|| crate::switch::on("VICTORY_XMEM_VIEW_READ"))
++    })
++}
++
++pub(crate) fn snapshots_enabled() -> bool {
++    static DEFAULT: OnceLock<bool> = OnceLock::new();
++    if testing_snapshots() && let Some(enabled) = crossover(mode(), offset()) {
++        return enabled;
++    }
++    *DEFAULT.get_or_init(|| crate::switch::on("VICTORY_MERGE_WRITE_SNAPSHOTS"))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::crossover;
++
++    #[test]
++    fn abba_and_baab_swap_only_after_warmup() {
++        assert_eq!(crossover("abba", None), Some(false));
++        assert_eq!(crossover("baab", Some(7)), Some(false));
++        for n in 8..32 {
++            let abba = matches!((n - 8) % 8, 2 | 3 | 4 | 5);
++            assert_eq!(crossover("abba", Some(n)), Some(abba));
++            assert_eq!(crossover("baab", Some(n)), Some(!abba));
++        }
++        assert_eq!(crossover("off", None), Some(false));
++        assert_eq!(crossover("on", None), Some(true));
++        assert_eq!(crossover("", Some(12)), None);
++    }
++}
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -906,11 +906,15 @@
+             crate::resource::life::note(0, crate::resource::life::SUBMITTED, *submitted, 0);
+             // SAFETY: closed lists; the fence and event are ours.
+             unsafe {
++                let timing = latency::recording();
++                let fence_start = timing.then(latency::stamp);
+                 self.queue.ExecuteCommandLists(group);
+-                let waited = self
+-                    .queue
+-                    .Signal(&self.fence, *submitted)
+-                    .and_then(|()| self.fence.SetEventOnCompletion(*submitted, self.event));
++                let queue_end = timing.then(latency::stamp);
++                let signal = self.queue.Signal(&self.fence, *submitted);
++                let signal_end = timing.then(latency::stamp);
++                let waited = signal.and_then(|()| self.fence.SetEventOnCompletion(*submitted, self.event));
++                let event_armed = timing.then(latency::stamp);
++                let did_wait = waited.is_ok();
+                 match waited {
+                     Ok(()) => {
+                         if cfg!(feature = "diagnostics") && crate::switch::on("VICTORY_TRACE_FENCE") {
+@@ -935,6 +939,15 @@
+                         }
+                     }
+                     Err(e) => tracing::warn!(error = %e, "host submission not waited for"),
++                }
++                if let (Some(start), Some(submit), Some(signal), Some(arm)) =
++                    (fence_start, queue_end, signal_end, event_armed)
++                {
++                    let returned = latency::stamp();
++                    tracing::info!(target: "render_latency", sequence=*submitted, group=i, lists=group.len(),
++                        started=latency::us(start), submitted=latency::us(submit), signaled=latency::us(signal),
++                        armed=latency::us(arm), returned=latency::us(returned), waited=did_wait,
++                        "fence timeline");
+                 }
+             }
+             #[cfg(feature = "diagnostics")]
+@@ -2049,8 +2062,10 @@
+         // after an earlier write declaration used to patch its snapshot here.
+         #[cfg(feature = "diagnostics")]
+         let _timed = crate::watch::Timed(std::time::Instant::now(), crate::copystat::C::StepGpuWriteUs);
+-        static MERGE: OnceLock<bool> = OnceLock::new();
+-        if *MERGE.get_or_init(|| crate::switch::on("VICTORY_MERGE_WRITE_SNAPSHOTS")) {
++        let declarations = self.snapshots.len();
++        let merge = latency::snapshots_enabled();
++        let snapshot_start = latency::recording().then(latency::stamp);
++        if merge {
+             self.snapshots.sort_unstable_by_key(|(s, at, _)| (std::sync::Arc::as_ptr(s), *at));
+             for group in self.snapshots.chunk_by(|a, b| std::sync::Arc::ptr_eq(&a.0, &b.0)) {
+                 group[0].0.snapshot_declarations(group.iter().map(|(_, at, n)| (*at, *n)));
+@@ -2059,6 +2074,12 @@
+             for (shadow, address, len) in self.snapshots {
+                 shadow.writing(address, len, false);
+             }
++        }
++        if let Some(start) = snapshot_start {
++            let end = latency::stamp();
++            tracing::info!(target: "render_latency", merge, declarations,
++                begin=latency::us(start), end=latency::us(end),
++                elapsed_us=end.duration_since(start).as_micros() as u64, "snapshot timeline");
+         }
+     }
+ 
+@@ -2632,6 +2653,7 @@
+ 
+     /// Counts a presented frame.
+     fn frame(&mut self, hwnd: HWND) {
++        #[cfg(feature = "diagnostics")]
+         if latency::recording() {
+             tracing::info!(target: "render_latency", frame=crate::queue::presented(), t=latency::us(Instant::now()),
+                 drawn=crate::draw::drawn(), dispatched=crate::draw::dispatched(), "frame delivered");

@@ -1,0 +1,10 @@
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -2632,6 +2632,7 @@
+ 
+     /// Counts a presented frame.
+     fn frame(&mut self, hwnd: HWND) {
++        #[cfg(feature = "diagnostics")]
+         if latency::recording() {
+             tracing::info!(target: "render_latency", frame=crate::queue::presented(), t=latency::us(Instant::now()),
+                 drawn=crate::draw::drawn(), dispatched=crate::draw::dispatched(), "frame delivered");

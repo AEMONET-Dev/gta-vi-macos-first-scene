@@ -1,0 +1,41 @@
+{
+  "upstream": "https://github.com/pragyaangaur/VIctory-macOS.git",
+  "upstream_commit": "cc8e90e7e32f803fcb1873b3b921709f08a51829",
+  "profiles": {
+    "baseline": {
+      "revision": "b229d1312d77eb52dd0c1d951ad8e479121ae466",
+      "patch": "patches/profiles/baseline.patch",
+      "sha256": "399a76cb75dd6a46fedaccfcb4cf5f72f36850b3acbdb5974eba0c881d34b4b7"
+    },
+    "graphics-v3": {
+      "revision": "8e1b338cb0dd8dec396717519c1be6ef41078f8e",
+      "patch": "patches/profiles/graphics-v3.patch",
+      "sha256": "b6ab4bba2ed6259355d9d5cce536c47e6890c0a5709d692a9d74ce322468055d"
+    },
+    "graphics-halves": {
+      "revision": "d253f5428377a9ef47790216d0b4b77527a9607e",
+      "patch": "patches/profiles/graphics-halves.patch",
+      "sha256": "a741b370b9fd2d24b0e105a041d3890a5aa95568b93bdb643b10157ba96377a0"
+    },
+    "graphics": {
+      "revision": "e2c4a8b24aa13fb7455fc9aa19f941d4736954d4",
+      "patch": "patches/profiles/graphics.patch",
+      "sha256": "ace7ad39087e6070528b023b9542e42dc58d2c1ede4244a318e295d5afe358bd"
+    },
+    "performance-timing": {
+      "revision": "2ba73947eb98d67474584259d98cd8f52479c08b",
+      "patch": "patches/profiles/performance-timing.patch",
+      "sha256": "3b5b55955d85484489be6939831bca2a83811e88fe830fba4024922955ddba0c"
+    },
+    "performance": {
+      "revision": "8bb04e42a42b37d045374624311b05d9ab058291",
+      "patch": "patches/profiles/performance.patch",
+      "sha256": "038372c0454f8184372c4745d1de831a8ad981d7434660d6da11ade762c8e852"
+    },
+    "integration": {
+      "revision": "a6aeaa63d9b194d2861d940c92ac7ab24539f233",
+      "patch": "patches/profiles/integration.patch",
+      "sha256": "9e0673bd795604d0b8e514b1b72cd9bca5c1d53358e0d7b0ee63e48180607f84"
+    }
+  }
+}

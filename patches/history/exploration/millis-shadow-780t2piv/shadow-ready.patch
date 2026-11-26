@@ -1,0 +1,306 @@
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -5,6 +5,7 @@
+ //! overlap them with per-submission fences once more than clears run.
+ 
+ mod refresh;
++pub(crate) use refresh::merge_overlaps;
+ mod sparse;
+ pub(crate) mod upload_jobs;
+ 
+@@ -1920,7 +1921,10 @@
+                         // Arm the watched pages before further title writes.
+                         shadow.writing(*address, *len, true);
+                     } else {
+-                        batch.snapshots.push((shadow.clone(), *address, *len));
++                        batch.snapshots
++                            .entry(std::sync::Arc::as_ptr(shadow) as usize)
++                            .or_insert_with(|| (shadow.clone(), Vec::new()))
++                            .1.push((*address, address.saturating_add(*len)));
+                     }
+                     continue;
+                 }
+@@ -1992,7 +1996,7 @@
+     buffers: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, refresh::Ranges)>,
+     /// Unmarked shader writes across all lists. Snapshot the host buffer
+     /// after its final refresh, immediately before submitting it to the GPU.
+-    snapshots: Vec<(std::sync::Arc<crate::shadow::Shadow>, usize, usize)>,
++    snapshots: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, Vec<(usize, usize)>)>,
+     /// Buffers with requests since the last flush, in first-use order.
+     pending: Vec<usize>,
+     /// Reused while planning the copy runs for each pending buffer.
+@@ -2040,8 +2044,8 @@
+         // after an earlier write declaration used to patch its snapshot here.
+         #[cfg(feature = "diagnostics")]
+         let _timed = crate::watch::Timed(std::time::Instant::now(), crate::copystat::C::StepGpuWriteUs);
+-        for (shadow, address, len) in self.snapshots {
+-            shadow.writing(address, len, false);
++        for (shadow, mut ranges) in self.snapshots.into_values() {
++            shadow.snapshot_writes(&mut ranges);
+         }
+     }
+ 
+@@ -2232,6 +2236,27 @@
+         // SAFETY: a host destination is the caller's live upload mapping.
+         unsafe { dst.write_bytes(0, len) };
+     }
++}
++
++/// Exact byte equality for mapped GPU buffers and textures. Compare whole
++/// cache lines so LLVM vectorizes the common equal case under Wine/Rosetta.
++pub(crate) fn same_bytes(previous: &[u8], current: &[u8]) -> bool {
++    if previous.len() != current.len() || current.len() < 512 {
++        return previous == current;
++    }
++    let (previous_lines, previous_tail) = previous.as_chunks::<64>();
++    let (current_lines, current_tail) = current.as_chunks::<64>();
++    for (a, b) in previous_lines.iter().zip(current_lines) {
++        let (a, _) = a.as_chunks::<16>();
++        let (b, _) = b.as_chunks::<16>();
++        let differences = a.iter().zip(b).fold(0, |bits, (x, y)| {
++            bits | (u128::from_ne_bytes(*x) ^ u128::from_ne_bytes(*y))
++        });
++        if differences != 0 {
++            return false;
++        }
++    }
++    previous_tail == current_tail
+ }
+ 
+ /// Reads title memory at `src` into `dst`; false if a page of it is not
+--- a/crates/victory-gpu/src/host/refresh.rs
++++ b/crates/victory-gpu/src/host/refresh.rs
+@@ -92,7 +92,7 @@
+     }
+ }
+ 
+-fn merge_overlaps(spans: &mut Vec<Span>) {
++pub(crate) fn merge_overlaps(spans: &mut Vec<Span>) {
+     if spans.len() < 2 {
+         return;
+     }
+--- a/crates/victory-gpu/src/shadow.rs
++++ b/crates/victory-gpu/src/shadow.rs
+@@ -51,6 +51,21 @@
+ /// Snapshot segments (offset, bytes) and the pieces compared.
+ type Snapshot = (Vec<(usize, Vec<u8>)>, std::collections::HashSet<usize>);
+ 
++/// Keep GPU-modified bytes and the title's current values everywhere else.
++/// Both copies receive the result. Report whether title memory needs writing.
++fn merge_gpu_bytes(title: &mut [u8], host: &mut [u8], before: &[u8]) -> bool {
++    debug_assert_eq!(title.len(), host.len());
++    debug_assert_eq!(title.len(), before.len());
++    let mut differences = 0u8;
++    for ((t, h), old) in title.iter_mut().zip(host.iter_mut()).zip(before) {
++        let current = if *h == *old { *t } else { *h };
++        differences |= *t ^ current;
++        *t = current;
++        *h = current;
++    }
++    differences != 0
++}
++
+ /// Snapshot memory kept for reuse (already touched, so no page faults).
+ static POOL: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+ 
+@@ -281,6 +296,21 @@
+             t.arm(address, address + len);
+             return;
+         }
++        self.snapshot(address, len);
++    }
++
++    /// All unmarked ranges for this copy are known at the final submission
++    /// boundary. Keep the original declarations for their individual returns,
++    /// but sample their exact union once; gaps and other copies stay separate.
++    pub(crate) fn snapshot_writes(&self, ranges: &mut Vec<(usize, usize)>) {
++        self.pending.lock().unwrap_or_else(|e| e.into_inner()).extend(ranges.iter().copied());
++        crate::host::merge_overlaps(ranges);
++        for &(from, to) in ranges.iter() {
++            self.snapshot(from, to - from);
++        }
++    }
++
++    fn snapshot(&self, address: usize, len: usize) {
+         let (from, to) = self.inside(address, len);
+         if from >= to {
+             return;
+@@ -354,7 +384,7 @@
+             // By 64 KiB piece: the copy compared with its bytes before the
+             // submission, title memory read only where the GPU wrote.
+             const PIECE: usize = 64 << 10;
+-            let mut title = vec![0u8; PIECE];
++            let mut scratch = None;
+             let mut synced = Vec::new();
+             let mut at = from;
+             while at < to {
+@@ -363,7 +393,6 @@
+                 // writes it.
+                 let host = unsafe { std::slice::from_raw_parts_mut(self.data.add(at), n) };
+                 let old = &before[at - from..at - from + n];
+-                let title = &mut title[..n];
+                 // A whole piece is compared once per submission, whichever
+                 // declared ranges overlap it: then what the GPU wrote there
+                 // went back.
+@@ -373,18 +402,15 @@
+                 }
+                 #[cfg(feature = "diagnostics")]
+                 crate::copystat::add(crate::copystat::C::CompareBytes, n as u64);
+-                if host != old && crate::host::read_into((start + at) as *const u8, title) {
++                if !crate::host::same_bytes(host, old) {
++                    let title = &mut scratch.get_or_insert_with(|| vec![0u8; PIECE])[..n];
++                    if !crate::host::read_into((start + at) as *const u8, title) {
++                        at += n;
++                        continue;
++                    }
+                     // Title memory with the GPU's bytes put in; the copy
+                     // takes the title's bytes in turn.
+-                    let mut changed = false;
+-                    for ((t, h), o) in title.iter_mut().zip(host.iter_mut()).zip(old) {
+-                        if *h != *o && *t != *h {
+-                            *t = *h;
+-                            changed = true;
+-                        }
+-                        *h = *t;
+-                    }
+-                    if changed {
++                    if merge_gpu_bytes(title, host, old) {
+                         let _writing = crate::watch::writing(start + at, n);
+                         crate::host::write_mapped((start + at) as *mut u8, title.as_ptr(), n);
+                         written += n;
+@@ -459,15 +485,7 @@
+             None => (*host != title[..]).then_some(host.as_ptr()),
+             Some(before) => {
+                 let before = &before[from - page..to - page];
+-                let mut changed = false;
+-                for ((t, h), b) in title.iter_mut().zip(host.iter_mut()).zip(before) {
+-                    if *h != *b && *t != *h {
+-                        *t = *h;
+-                        changed = true;
+-                    }
+-                    *h = *t;
+-                }
+-                changed.then_some(title.as_ptr())
++                merge_gpu_bytes(&mut title, host, before).then_some(title.as_ptr())
+             }
+         };
+         if let Some(bytes) = written {
+@@ -1139,6 +1157,59 @@
+         unregister(p, p as u64);
+     }
+ 
++    #[test]
++    fn three_way_merge_matches_each_byte_value() {
++        let mut title = vec![0u8; 65536];
++        let mut host = vec![0u8; 65536];
++        let mut before = vec![0u8; 65536];
++        for old in 0..=u8::MAX {
++            before.fill(old);
++            for (i, (t, h)) in title.iter_mut().zip(&mut host).enumerate() {
++                *t = (i >> 8) as u8;
++                *h = i as u8;
++            }
++            assert!(super::merge_gpu_bytes(&mut title, &mut host, &before));
++            for (i, (&t, &h)) in title.iter().zip(&host).enumerate() {
++                let gpu = i as u8;
++                let expected = if old == gpu { (i >> 8) as u8 } else { gpu };
++                assert_eq!((t, h), (expected, expected));
++            }
++            // Title and host now agree on every byte. The report must
++            // remain false even when the GPU differs from the baseline.
++            assert!(!super::merge_gpu_bytes(&mut title, &mut host, &before));
++        }
++    }
++
++    #[test]
++    fn batched_snapshots_keep_partial_alias_writes_and_exact_gaps() {
++        let (p, second) = crate::watch::tests::twin_views(2);
++        let len = 2 * PAGE;
++        register(p, p as u64, len as u64);
++        let copy = find(p as u64, len as u64).expect("test requires a host GPU");
++        copy.update(p, len);
++        let decl = [(p + 17, p + 60), (p + 11, p + 37), (p + 17, p + 60),
++                    (p + 60, p + 72), (p + PAGE + 3, p + PAGE + 6)];
++        let mut ranges = decl.to_vec();
++        copy.snapshot_writes(&mut ranges);
++        assert_eq!(ranges, [(p + 11, p + 72), (p + PAGE + 3, p + PAGE + 6)]);
++        let before = copy.before.lock().unwrap();
++        assert_eq!(before.0.iter().map(|(a,b)| (*a,b.len())).collect::<Vec<_>>(),
++                   [(11, 61), (PAGE + 3, 3)]);
++        drop(before);
++        // SAFETY: the second view of our two-page section.
++        unsafe { ((second + 33) as *mut u8).write_volatile(42) };
++        copy.write_host((p + 47) as u64, &[37]);
++        copy.write_host((p + 72) as u64, &[99]); // outside any writable range
++        copy.write_host((p + PAGE + 4) as u64, &[56]);
++        for &(a, b) in &[decl[4], decl[1], decl[3], decl[0]] {
++            copy.copy_back(a, b-a);
++        }
++        // SAFETY: all four bytes belong to the second, live view.
++        assert_eq!([33, 47, 72, PAGE + 4].map(|i| unsafe { ((second + i) as *const u8).read_volatile() }), [42, 37, 0, 56]);
++        assert!(copy.before.lock().unwrap().0.is_empty());
++        unregister(p, p as u64);
++    }
++
+     /// Pages shaders marked (`copy_back_marks`, `victory_shader::emit`
+     /// "Write marks") go back by the bytes the GPU changed. The title writes
+     /// a marked page after the copy took it (the guard saves its bytes from
+--- a/crates/victory-gpu/src/texture.rs
++++ b/crates/victory-gpu/src/texture.rs
+@@ -446,31 +446,9 @@
+     }
+ }
+ 
+-/// Exact equality for untracked texture memory. Comparing whole cache lines
+-/// lets LLVM vectorize the common equal case under Wine/Rosetta; small
+-/// textures and the final partial line use the regular slice comparison.
+-fn same_texels(previous: &[u8], current: &[u8]) -> bool {
+-    if previous.len() != current.len() || current.len() < 512 {
+-        return previous == current;
+-    }
+-    let (previous_lines, previous_tail) = previous.as_chunks::<64>();
+-    let (current_lines, current_tail) = current.as_chunks::<64>();
+-    for (a, b) in previous_lines.iter().zip(current_lines) {
+-        let (a, _) = a.as_chunks::<16>();
+-        let (b, _) = b.as_chunks::<16>();
+-        let differences = a.iter().zip(b).fold(0, |bits, (x, y)| {
+-            bits | (u128::from_ne_bytes(*x) ^ u128::from_ne_bytes(*y))
+-        });
+-        if differences != 0 {
+-            return false;
+-        }
+-    }
+-    previous_tail == current_tail
+-}
+-
+ /// Only changed images acquire storage, sized for their own texels.
+ fn save_changed(last: &mut Vec<u8>, bytes: &[u8]) -> bool {
+-    if same_texels(last, bytes) {
++    if crate::host::same_bytes(last, bytes) {
+         return false;
+     }
+     last.clear();
+@@ -511,7 +489,7 @@
+         if !crate::host::read_into(memory.wrapping_add(start), bytes) {
+             return None;
+         }
+-        if replacement.is_none() && (last.len() != size || !same_texels(&last[start..start+len], bytes)) {
++        if replacement.is_none() && (last.len() != size || !crate::host::same_bytes(&last[start..start+len], bytes)) {
+             if !committed(memory, size) {
+                 return None;
+             }
+@@ -687,11 +665,11 @@
+         let mut current = previous.clone();
+         for len in [0, 1, 511, 512, 513, 1088, 1089] {
+             let reference = &previous[1..1 + len];
+-            assert!(same_texels(reference, &current[..len]));
+-            assert!(!same_texels(reference, &current[..len + 1]));
++            assert!(crate::host::same_bytes(reference, &current[..len]));
++            assert!(!crate::host::same_bytes(reference, &current[..len + 1]));
+             for offset in 0..len {
+                 current[offset] ^= 1;
+-                assert!(!same_texels(reference, &current[..len]), "{len} at {offset}");
++                assert!(!crate::host::same_bytes(reference, &current[..len]), "{len} at {offset}");
+                 current[offset] ^= 1;
+             }
+         }

@@ -1,0 +1,184 @@
+diff --git a/crates/victory-shader/src/emit/container.rs b/crates/victory-shader/src/emit/container.rs
+index d652ca708c..5baeb1b2c1 100644
+--- a/crates/victory-shader/src/emit/container.rs
++++ b/crates/victory-shader/src/emit/container.rs
+@@ -150,6 +150,8 @@ pub(crate) struct Binding {
+ }
+ 
+ pub(crate) struct Psv<'a> {
++    /// The entry point name in runtime info version 3 (validator 1.8).
++    pub entry_name: Option<&'a str>,
+     /// PSV shader kind: 0 pixel, 1 vertex, 5 compute.
+     pub stage: u8,
+     /// Vertex: writes `SV_Position`. Pixel: writes depth.
+@@ -168,7 +170,7 @@ pub(crate) struct Psv<'a> {
+     pub wave_size: Option<u32>,
+ }
+ 
+-/// `PSV0` with runtime info version 2 (validator 1.6).
++/// `PSV0` with runtime info version 2, or version 3 with an entry name.
+ pub(crate) fn psv(p: &Psv) -> Vec<u8> {
+     let vectors = |els: &[SigElement]| {
+         els.iter()
+@@ -184,7 +186,7 @@ pub(crate) fn psv(p: &Psv) -> Vec<u8> {
+             out.extend(v.to_le_bytes());
+         }
+     };
+-    u32s(&mut out, &[48]);
++    u32s(&mut out, &[if p.entry_name.is_some() { 52 } else { 48 }]);
+     let mut info = [0u8; 48];
+     info[0] = u8::from(p.flag);
+     if p.stage == 0 {
+@@ -225,6 +227,9 @@ pub(crate) fn psv(p: &Psv) -> Vec<u8> {
+         info[26..28].copy_from_slice(&(max as u16).to_le_bytes());
+     }
+     out.extend(info);
++    if p.entry_name.is_some() {
++        u32s(&mut out, &[1]); // First name, after the empty string.
++    }
+     u32s(&mut out, &[p.bindings.len() as u32]);
+     if !p.bindings.is_empty() {
+         u32s(&mut out, &[24]);
+@@ -237,6 +242,9 @@ pub(crate) fn psv(p: &Psv) -> Vec<u8> {
+     }
+     // Names of arbitrary semantics (system values use ""), then indices.
+     let mut strings = vec![0u8];
++    if let Some(name) = p.entry_name {
++        strings.extend(name.bytes().chain([0]));
++    }
+     let mut indices: Vec<u32> = Vec::new();
+     let mut elements = Vec::new();
+     for e in p.inputs.iter().chain(p.outputs).chain(p.prims) {
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index 65bd8f22e8..53e914cc26 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -7592,6 +7592,15 @@ impl<'a> Lower<'a> {
+             "image_get_resinfo" => (72, false),
+             _ => return Err(name),
+         };
++        if matches!(op, 60 | 61)
++            && let StageIo::Cs(cs) = self.x.native.io
++        {
++            let [x, y, z] = cs.threads;
++            let linear_quads = y == 1 && z == 1 && x.is_multiple_of(4);
++            let tiled_quads = x.is_multiple_of(2) && y.is_multiple_of(2);
++            // Keep the existing validator target for incompatible groups.
++            self.s.compute_derivatives = linear_quads || tiled_quads;
++        }
+         if op == 72 {
+             // Width, height, depth or layers, levels (per dmask) of the level
+             // in the first address: DXIL's dimensions; a channel DXIL leaves
+@@ -9597,6 +9606,16 @@ mod tests {
+         layout: Vec<RootParam>,
+         used: Vec<UsedResource>,
+         wave64: bool,
++    ) -> Result<Lowered, crate::ShaderError> {
++        lower_compute(words, layout, used, wave64, [1, 1, 1])
++    }
++
++    fn lower_compute(
++        words: &[u32],
++        layout: Vec<RootParam>,
++        used: Vec<UsedResource>,
++        wave64: bool,
++        threads: [u32; 3],
+     ) -> Result<Lowered, crate::ShaderError> {
+         let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+         let sgprs: u32 = layout.iter().map(|p| p.sgprs).sum();
+@@ -9609,7 +9628,7 @@ mod tests {
+             io: StageIo::Cs(ComputeIo {
+                 // The layout's user SGPRs (at least two), 512 bytes of LDS.
+                 rsrc2: 1 << 15 | sgprs.max(2) << 1,
+-                threads: [1, 1, 1],
++                threads,
+             }),
+             code,
+         };
+@@ -9630,6 +9649,42 @@ mod tests {
+         })
+     }
+ 
++    #[test]
++    fn implicit_compute_sampling_validates_with_quad_threads() {
++        use super::super::validator::Validator;
++
++        let words = [
++            0xBE82_0300, // s_mov_b32 s2, s0
++            0xBE83_0380, // s_mov_b32 s3, 0
++            0xBE84_0301, // s_mov_b32 s4, s1
++            0xBE85_0380, // s_mov_b32 s5, 0
++            0xF40C_0201,
++            0xFA00_0000, // s_load_dwordx8 s[8:15], s[2:3], null
++            0xF408_0402,
++            0xFA00_0000, // s_load_dwordx4 s[16:19], s[4:5], null
++            0xF080_0F08,
++            0x0082_0400, // image_sample v[4:7], v[0:1], s[8:15], s[16:19]
++            0xD834_0000,
++            0x0000_0400, // ds_write_b32 v0, v4
++            S_ENDPGM,
++        ];
++        for (threads, runtime_info_size) in [([4, 1, 1], 52), ([2, 2, 1], 52), ([1, 1, 1], 48)] {
++            let (layout, used) = texture_tables();
++            let mut shader = lower_compute(&words, layout, used, false, threads).unwrap();
++            let container = crate::Container::parse(&shader.dxil).unwrap();
++            let psv = container.part(crate::FourCC::PSV0).unwrap();
++            assert_eq!(
++                u32::from_le_bytes(psv.data[..4].try_into().unwrap()),
++                runtime_info_size
++            );
++            if runtime_info_size == 52
++                && let Ok(mut validator) = Validator::load(Validator::default_path().as_deref())
++            {
++                validator.validate(&mut shader.dxil).unwrap();
++            }
++        }
++    }
++
+     /// Root parameter `slot` in user SGPRs from `user_data` on.
+     fn root(root: RootType, user_data: u8, slot: u8) -> RootParam {
+         RootParam {
+diff --git a/crates/victory-shader/src/emit/shader.rs b/crates/victory-shader/src/emit/shader.rs
+index 51e170c21c..df97b14bd7 100644
+--- a/crates/victory-shader/src/emit/shader.rs
++++ b/crates/victory-shader/src/emit/shader.rs
+@@ -105,6 +105,8 @@ pub(crate) struct Shader {
+     pub nonuniform_handles: u32,
+     /// A compute shader with this thread-group size.
+     pub threads: Option<[u32; 3]>,
++    /// Compute sampling with implicit derivatives needs validator 1.8.
++    pub compute_derivatives: bool,
+     /// The wave size a compute shader requires (`WaveSize`).
+     pub wave_size: Option<u32>,
+     /// Thread-group shared memory, in dwords.
+@@ -164,6 +166,7 @@ impl Shader {
+             flags: 0,
+             nonuniform_handles: 0,
+             threads: None,
++            compute_derivatives: false,
+             wave_size: None,
+             lds_dwords: 0,
+             lds: None,
+@@ -777,7 +780,13 @@ impl Shader {
+         let six = i32c(&mut self, 6);
+         let version = self.m.md_node(vec![Some(one), Some(six)]);
+         self.m.named_md("dx.version", vec![version]);
+-        self.m.named_md("dx.valver", vec![version]);
++        let validator = if self.compute_derivatives {
++            let eight = i32c(&mut self, 8);
++            self.m.md_node(vec![Some(one), Some(eight)])
++        } else {
++            version
++        };
++        self.m.named_md("dx.valver", vec![validator]);
+         // Program kinds: 0 pixel, 1 vertex, 2 geometry, 5 compute, 13 mesh.
+         let (name, kind) = match (self.threads, self.pixel) {
+             _ if self.mesh.is_some() => ("ms", 13u32),
+@@ -838,6 +847,7 @@ impl Shader {
+             self.outputs.iter().any(|o| o.kind == 3)
+         };
+         let psv0 = container::psv(&Psv {
++            entry_name: self.compute_derivatives.then_some("main"),
+             stage: kind as u8,
+             flag: flag && self.threads.is_none(),
+             inputs: &self.inputs,

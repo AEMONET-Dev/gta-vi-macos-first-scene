@@ -1,0 +1,227 @@
+[
+  {
+    "run": "default-0o74wip1",
+    "commit": "c78cfdc462696d448c4b5b2271e653ea3dff41c6",
+    "binary_sha256": "3c5c9ecc52da38ca7c2661961945931e5379d169fafb065909be9b26533912c3",
+    "world_start_frame": 1529,
+    "same_relative_window": [
+      2,
+      8
+    ],
+    "n_intervals": 6,
+    "intervals_ms": [
+      7933.842,
+      7064.816,
+      7565.129,
+      9533.386,
+      8633.924,
+      5567.73
+    ],
+    "mean_ms": 7716.47,
+    "p95_nearest_rank_ms": 9533.386,
+    "meters": [
+      {
+        "utc": "2026-11-25T12:40:56.632628Z",
+        "fps": 0.1,
+        "frame_ms": 7483.1,
+        "copy_ms": 6922.0,
+        "copy_mb": 72310.0,
+        "draws": 1648,
+        "dropped_draws": 1130,
+        "reported_frame": 1024
+      },
+      {
+        "utc": "2026-11-25T12:41:04.566457Z",
+        "fps": 0.1,
+        "frame_ms": 7933.7,
+        "copy_ms": 7098.8,
+        "copy_mb": 64110.6,
+        "draws": 1390,
+        "dropped_draws": 865,
+        "reported_frame": 1024
+      },
+      {
+        "utc": "2026-11-25T12:41:11.631355Z",
+        "fps": 0.1,
+        "frame_ms": 7064.8,
+        "copy_ms": 6434.0,
+        "copy_mb": 68898.9,
+        "draws": 2837,
+        "dropped_draws": 1753,
+        "reported_frame": 1024
+      },
+      {
+        "utc": "2026-11-25T12:41:19.196926Z",
+        "fps": 0.1,
+        "frame_ms": 7565.5,
+        "copy_ms": 6854.4,
+        "copy_mb": 71214.6,
+        "draws": 1641,
+        "dropped_draws": 1406,
+        "reported_frame": 1024
+      },
+      {
+        "utc": "2026-11-25T12:41:28.729717Z",
+        "fps": 0.1,
+        "frame_ms": 9532.7,
+        "copy_ms": 8744.9,
+        "copy_mb": 75168.4,
+        "draws": 2305,
+        "dropped_draws": 1449,
+        "reported_frame": 1024
+      },
+      {
+        "utc": "2026-11-25T12:41:37.363703Z",
+        "fps": 0.1,
+        "frame_ms": 8633.9,
+        "copy_ms": 7882.7,
+        "copy_mb": 72493.0,
+        "draws": 525,
+        "dropped_draws": 1287,
+        "reported_frame": 1024
+      }
+    ],
+    "meter_medians": {
+      "frame_ms": 7749.6,
+      "copy_ms": 7010.4,
+      "copy_mb": 71762.3,
+      "draws": 1644.5,
+      "dropped_draws": 1346.5
+    },
+    "world_images": {
+      "2": {
+        "name": "frame-1531.png",
+        "size": [
+          1920,
+          1080
+        ],
+        "bytes": 97994,
+        "rgb_mean_0_255": 39.75,
+        "sample_distinct_rgb": 298,
+        "rgb_sha256": "5a0b5919bc7839e907f1f76564904a1b54b9490d140d64862a25464aa8be9bd1"
+      },
+      "6": {
+        "name": "frame-1535.png",
+        "size": [
+          1920,
+          1080
+        ],
+        "bytes": 6121,
+        "rgb_mean_0_255": 0.0,
+        "sample_distinct_rgb": 1,
+        "rgb_sha256": "1f56bd4f609fab80a2b9cce7487d5c08de2768476849e1353881ca748d8d3b6a"
+      },
+      "8": {
+        "name": "frame-1537.png",
+        "size": [
+          1920,
+          1080
+        ],
+        "bytes": 6121,
+        "rgb_mean_0_255": 0.0,
+        "sample_distinct_rgb": 1,
+        "rgb_sha256": "1f56bd4f609fab80a2b9cce7487d5c08de2768476849e1353881ca748d8d3b6a"
+      },
+      "12": {
+        "name": "frame-1541.png",
+        "size": [
+          1920,
+          1080
+        ],
+        "bytes": 6121,
+        "rgb_mean_0_255": 0.0,
+        "sample_distinct_rgb": 1,
+        "rgb_sha256": "1f56bd4f609fab80a2b9cce7487d5c08de2768476849e1353881ca748d8d3b6a"
+      }
+    },
+    "last_capture": 1541,
+    "seconds_without_further_capture_at_end": 2.493
+  },
+  {
+    "run": "tracking-0q0ax4ai",
+    "commit": "c78cfdc462696d448c4b5b2271e653ea3dff41c6",
+    "binary_sha256": "3c5c9ecc52da38ca7c2661961945931e5379d169fafb065909be9b26533912c3",
+    "world_start_frame": 2074,
+    "same_relative_window": [
+      2,
+      8
+    ],
+    "n_intervals": 6,
+    "intervals_ms": [
+      3764.955,
+      1067.248,
+      4331.587,
+      1200.331,
+      1429.376,
+      1971.4
+    ],
+    "mean_ms": 2294.15,
+    "p95_nearest_rank_ms": 4331.587,
+    "meters": [
+      {
+        "utc": "2026-11-25T12:44:04.480569Z",
+        "fps": 0.9,
+        "frame_ms": 1066.2,
+        "copy_ms": 332.9,
+        "copy_mb": 682.7,
+        "draws": 2963,
+        "dropped_draws": 409,
+        "reported_frame": 2048
+      },
+      {
+        "utc": "2026-11-25T12:44:10.011987Z",
+        "fps": 0.8,
+        "frame_ms": 1199.8,
+        "copy_ms": 480.8,
+        "copy_mb": 434.9,
+        "draws": 1756,
+        "dropped_draws": 702,
+        "reported_frame": 2048
+      }
+    ],
+    "meter_medians": {
+      "frame_ms": 1133.0,
+      "copy_ms": 406.85,
+      "copy_mb": 558.8,
+      "draws": 2359.5,
+      "dropped_draws": 555.5
+    },
+    "world_images": {
+      "2": {
+        "name": "frame-2076.png",
+        "size": [
+          1920,
+          1080
+        ],
+        "bytes": 8590,
+        "rgb_mean_0_255": 36.0,
+        "sample_distinct_rgb": 1,
+        "rgb_sha256": "4969597411cf4a39b682dbd86b2a4a5cb11027b200a5884b15a63d592630b8b0"
+      },
+      "6": {
+        "name": "frame-2080.png",
+        "size": [
+          1920,
+          1080
+        ],
+        "bytes": 114083,
+        "rgb_mean_0_255": 39.618,
+        "sample_distinct_rgb": 327,
+        "rgb_sha256": "9954935edb82b72d6aec67b5ea7c6efa507a073b0c5489c4a5b41476b03c38f0"
+      },
+      "8": {
+        "name": "frame-2082.png",
+        "size": [
+          1920,
+          1080
+        ],
+        "bytes": 6121,
+        "rgb_mean_0_255": 0.0,
+        "sample_distinct_rgb": 1,
+        "rgb_sha256": "1f56bd4f609fab80a2b9cce7487d5c08de2768476849e1353881ca748d8d3b6a"
+      }
+    },
+    "last_capture": 2082,
+    "seconds_without_further_capture_at_end": 69.375
+  }
+]

@@ -1,0 +1,312 @@
+{
+  "world": 1847,
+  "used_blocks": 6,
+  "on": {
+    "frames": 12,
+    "total_gb": 199.640683582,
+    "flush_ms_per_GB": 72.23093881101175,
+    "mean_frame_ms": 4058.259,
+    "p95_frame_ms": 6833.331,
+    "median_draws": 3952.5,
+    "eligible": 275,
+    "parallel": 275
+  },
+  "off": {
+    "frames": 12,
+    "total_gb": 198.898258672,
+    "flush_ms_per_GB": 60.42849786744764,
+    "mean_frame_ms": 4055.576416666667,
+    "p95_frame_ms": 6899.967000000001,
+    "median_draws": 2853,
+    "eligible": 272,
+    "parallel": 0
+  },
+  "rows": [
+    {
+      "end": 1856,
+      "relative": 9,
+      "on": false,
+      "count": 28,
+      "acquired": 0,
+      "mb": 17558.982552,
+      "ms": 1809.954,
+      "frame_ms": 5775.9980000000005,
+      "meter_draws": 2441
+    },
+    {
+      "end": 1857,
+      "relative": 10,
+      "on": true,
+      "count": 25,
+      "acquired": 25,
+      "mb": 16459.073508,
+      "ms": 1174.808,
+      "frame_ms": 4465.911,
+      "meter_draws": null
+    },
+    {
+      "end": 1858,
+      "relative": 11,
+      "on": true,
+      "count": 25,
+      "acquired": 25,
+      "mb": 16415.68396,
+      "ms": 1544.63,
+      "frame_ms": 3733.799,
+      "meter_draws": 2165
+    },
+    {
+      "end": 1859,
+      "relative": 12,
+      "on": false,
+      "count": 24,
+      "acquired": 0,
+      "mb": 16081.042004,
+      "ms": 573.344,
+      "frame_ms": 2666.748,
+      "meter_draws": null
+    },
+    {
+      "end": 1860,
+      "relative": 13,
+      "on": false,
+      "count": 13,
+      "acquired": 0,
+      "mb": 11166.223252,
+      "ms": 994.783,
+      "frame_ms": 2799.9719999999998,
+      "meter_draws": 552
+    },
+    {
+      "end": 1861,
+      "relative": 14,
+      "on": true,
+      "count": 13,
+      "acquired": 13,
+      "mb": 11088.236282,
+      "ms": 821.399,
+      "frame_ms": 2399.984,
+      "meter_draws": null
+    },
+    {
+      "end": 1862,
+      "relative": 15,
+      "on": true,
+      "count": 12,
+      "acquired": 12,
+      "mb": 11022.819558,
+      "ms": 1823.317,
+      "frame_ms": 3300.36,
+      "meter_draws": 3892
+    },
+    {
+      "end": 1863,
+      "relative": 16,
+      "on": false,
+      "count": 22,
+      "acquired": 0,
+      "mb": 16028.275534,
+      "ms": 372.071,
+      "frame_ms": 2216.561,
+      "meter_draws": null
+    },
+    {
+      "end": 1864,
+      "relative": 17,
+      "on": false,
+      "count": 25,
+      "acquired": 0,
+      "mb": 17189.67372,
+      "ms": 1681.665,
+      "frame_ms": 5315.894,
+      "meter_draws": 3052
+    },
+    {
+      "end": 1865,
+      "relative": 18,
+      "on": true,
+      "count": 26,
+      "acquired": 26,
+      "mb": 17678.132722,
+      "ms": 1114.339,
+      "frame_ms": 4333.397,
+      "meter_draws": null
+    },
+    {
+      "end": 1866,
+      "relative": 19,
+      "on": true,
+      "count": 25,
+      "acquired": 25,
+      "mb": 17748.59802,
+      "ms": 750.606,
+      "frame_ms": 2966.53,
+      "meter_draws": 1688
+    },
+    {
+      "end": 1867,
+      "relative": 20,
+      "on": false,
+      "count": 14,
+      "acquired": 0,
+      "mb": 11866.3206,
+      "ms": 1379.703,
+      "frame_ms": 3266.664,
+      "meter_draws": null
+    },
+    {
+      "end": 1868,
+      "relative": 21,
+      "on": false,
+      "count": 14,
+      "acquired": 0,
+      "mb": 11846.49772,
+      "ms": 611.795,
+      "frame_ms": 3234.1929999999998,
+      "meter_draws": 5663
+    },
+    {
+      "end": 1869,
+      "relative": 22,
+      "on": true,
+      "count": 22,
+      "acquired": 22,
+      "mb": 16600.236252,
+      "ms": 916.026,
+      "frame_ms": 3165.81,
+      "meter_draws": null
+    },
+    {
+      "end": 1870,
+      "relative": 23,
+      "on": true,
+      "count": 24,
+      "acquired": 24,
+      "mb": 17673.567396,
+      "ms": 1950.571,
+      "frame_ms": 6833.331,
+      "meter_draws": 4695
+    },
+    {
+      "end": 1871,
+      "relative": 24,
+      "on": false,
+      "count": 22,
+      "acquired": 0,
+      "mb": 16636.765452,
+      "ms": 712.29,
+      "frame_ms": 3416.978,
+      "meter_draws": null
+    },
+    {
+      "end": 1872,
+      "relative": 25,
+      "on": false,
+      "count": 26,
+      "acquired": 0,
+      "mb": 17951.112446,
+      "ms": 762.078,
+      "frame_ms": 4149.613,
+      "meter_draws": 4945
+    },
+    {
+      "end": 1873,
+      "relative": 26,
+      "on": true,
+      "count": 26,
+      "acquired": 26,
+      "mb": 18479.84476,
+      "ms": 1411.146,
+      "frame_ms": 3799.969,
+      "meter_draws": null
+    },
+    {
+      "end": 1874,
+      "relative": 27,
+      "on": true,
+      "count": 25,
+      "acquired": 25,
+      "mb": 18873.722908,
+      "ms": 1409.127,
+      "frame_ms": 3366.7090000000003,
+      "meter_draws": 5655
+    },
+    {
+      "end": 1875,
+      "relative": 28,
+      "on": false,
+      "count": 26,
+      "acquired": 0,
+      "mb": 19185.909824,
+      "ms": 1340.978,
+      "frame_ms": 3933.1870000000004,
+      "meter_draws": null
+    },
+    {
+      "end": 1876,
+      "relative": 29,
+      "on": false,
+      "count": 29,
+      "acquired": 0,
+      "mb": 20478.117772,
+      "ms": 1097.921,
+      "frame_ms": 4800.021,
+      "meter_draws": 2599
+    },
+    {
+      "end": 1877,
+      "relative": 30,
+      "on": true,
+      "count": 25,
+      "acquired": 25,
+      "mb": 18111.335908,
+      "ms": 686.302,
+      "frame_ms": 4525.103999999999,
+      "meter_draws": null
+    },
+    {
+      "end": 1878,
+      "relative": 31,
+      "on": true,
+      "count": 27,
+      "acquired": 27,
+      "mb": 19489.432308,
+      "ms": 817.963,
+      "frame_ms": 5808.204,
+      "meter_draws": 4013
+    },
+    {
+      "end": 1879,
+      "relative": 32,
+      "on": false,
+      "count": 27,
+      "acquired": 0,
+      "mb": 19516.422632,
+      "ms": 938.393,
+      "frame_ms": 6899.967000000001,
+      "meter_draws": 2853
+    },
+    {
+      "end": 1880,
+      "relative": 33,
+      "on": false,
+      "count": 30,
+      "acquired": 0,
+      "mb": 20951.897716,
+      "ms": 1554.102,
+      "frame_ms": 5967.119000000001,
+      "meter_draws": 2364
+    },
+    {
+      "end": 1881,
+      "relative": 34,
+      "on": true,
+      "count": 28,
+      "acquired": 28,
+      "mb": 19780.544588,
+      "ms": 1052.725,
+      "frame_ms": 6432.745,
+      "meter_draws": 2921
+    }
+  ]
+}

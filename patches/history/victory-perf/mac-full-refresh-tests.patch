@@ -1,0 +1,124 @@
+diff --git a/crates/victory-gpu/src/texture.rs b/crates/victory-gpu/src/texture.rs
+--- a/crates/victory-gpu/src/texture.rs
++++ b/crates/victory-gpu/src/texture.rs
+@@ -1461,3 +1461,45 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod mac_full_texture {
++    use super::*;
++    use victory_formats::texture::{Dimension, Swizzle, Texture, TextureDesc};
++    #[test]
++    fn updated_then_zeroed_texture_in_one_frame() {
++        use std::sync::atomic::Ordering::Relaxed;
++        assert!(!crate::fault_tracking());
++        let h=crate::host::host().expect("hardware D3D12 device");
++        assert!(!h.on_warp());
++        let (width,height)=(32,8);
++        let desc=TextureDesc {dimension:Dimension::Tex2d,width,height,depth_or_array:1,mips:1,
++            format:28,samples:1,swizzle:Swizzle::SW_4KB_S};
++        let layout=Texture::new(&desc).unwrap().planes[0].layout.clone();
++        let size=layout.size as usize;
++        let mut title=vec![0u8;size];
++        let bytes=256*height as usize;
++        let (buffer,data)=h.upload_buffer(bytes as u64).unwrap();
++        STAGED[0].fetch_add(1,Relaxed);
++        STAGED[1].fetch_add(bytes as u64,Relaxed);
++        let fp=D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
++            Offset:0, Footprint:D3D12_SUBRESOURCE_FOOTPRINT {Width:width,Height:height,Depth:1,RowPitch:256,..Default::default()}
++        };
++        let stage=Staging {
++            buffer,#[cfg(feature="diagnostics")] total:bytes as u64,data,footprints:vec![fp],rows:vec![height],layout:layout.clone(),mips:1,
++            first:0,size,bytes:bytes as u64,memory:title.as_ptr(),last:Mutex::default(),dirty:Default::default(),
++            uploaded:Default::default(),is_view:Default::default(),used:Default::default()
++        };
++        unsafe {data.write_bytes(0x7c,bytes);}
++        for pass in 0..3 {
++            for (i,x) in title.iter_mut().enumerate() {
++                *x=if pass==2 {0} else {((i*31+pass)^(i>>6)) as u8};
++            }
++            let mut expected=vec![0x7c;bytes];
++            layout.detile(&title,0,0,&mut expected,256,bytes).unwrap();
++            assert_eq!(stage.refresh_now(),size);
++            assert_eq!(unsafe{std::slice::from_raw_parts(data,bytes)},expected);
++        }
++        println!("FULL_COPY_OK texture_bytes={size} staged_bytes={bytes} passes=3 including_zero=true");
++    }
++}
+diff --git a/crates/victory-gpu/src/shadow.rs b/crates/victory-gpu/src/shadow.rs
+--- a/crates/victory-gpu/src/shadow.rs
++++ b/crates/victory-gpu/src/shadow.rs
+@@ -3470,3 +3470,59 @@
+     }
+     text
+ }
++
++#[cfg(test)]
++mod mac_no_watch {
++    use super::*;
++    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
++    use windows_sys::Win32::System::Memory as mem;
++
++    #[test]
++    fn alias_and_same_frame_writes_refresh() {
++        assert!(!crate::fault_tracking());
++        let host=crate::host::host().expect("hardware device");
++        assert!(!host.on_warp());
++        const N: usize = 2*PAGE+32;
++        unsafe {
++            let section=mem::CreateFileMappingW(INVALID_HANDLE_VALUE,std::ptr::null(),mem::PAGE_READWRITE,0,N as u32,std::ptr::null());
++            assert!(!section.is_null());
++            let a=mem::MapViewOfFile(section,mem::FILE_MAP_WRITE,0,0,N);
++            let b=mem::MapViewOfFile(section,mem::FILE_MAP_WRITE,0,0,N);
++            assert!(!a.Value.is_null() && !b.Value.is_null() && a.Value!=b.Value);
++            let addr=a.Value as usize;
++            let (buffer,data)=host.shared_buffer(N as u64).unwrap();
++            let gpu=buffer.GetGPUVirtualAddress();
++            let shadow=Shadow::new(buffer,data,gpu,addr as u64,N as u64);
++            let mut oracle=(0..N).map(|i| ((i*61) ^ (i>>7)) as u8).collect::<Vec<_>>();
++            std::ptr::copy_nonoverlapping(oracle.as_ptr(),a.Value.cast(),N);
++            assert_eq!(shadow.update(addr,N),N);
++            assert_eq!(std::slice::from_raw_parts(data,N),oracle);
++            let offsets=[0,PAGE-1,PAGE,PAGE+1,N-1];
++            for (step,offset) in offsets.into_iter().enumerate() {
++                oracle[offset]^=0xff;
++                let ptr=if step%2==0 {b.Value}else{a.Value};
++                ptr.cast::<u8>().add(offset).write_volatile(oracle[offset]);
++                assert_eq!(shadow.update(addr,N),N);
++                assert_eq!(std::slice::from_raw_parts(data,N),oracle);
++            }
++            let held=20..24;
++            shadow.pending.lock().unwrap().push((addr+held.start,addr+held.end));
++            for i in held.clone() {
++                data.add(i).write_volatile(0xa0);
++                oracle[i]=0xa0;
++                b.Value.cast::<u8>().add(i).write_volatile(0x11);
++            }
++            oracle[24]=0xf2;
++            b.Value.cast::<u8>().add(24).write_volatile(0xf2);
++            assert_eq!(shadow.update(addr,N),N-held.len());
++            assert_eq!(std::slice::from_raw_parts(data,N),oracle);
++            assert!(crate::watch::writes_kind(addr,addr+N,true).is_none());
++            assert!(crate::watch::writes_guarded(addr,addr+N).is_none());
++            drop(shadow);
++            assert_ne!(mem::UnmapViewOfFile(b),0);
++            assert_ne!(mem::UnmapViewOfFile(a),0);
++            assert_ne!(CloseHandle(section),0);
++            println!("FULL_COPY_OK bytes={N} full_reads=6 partial_reads=1 alias_views=2");
++        }
++    }
++}
+diff --git a/crates/victory-hle/src/modules/xmem.rs b/crates/victory-hle/src/modules/xmem.rs
+--- a/crates/victory-hle/src/modules/xmem.rs
++++ b/crates/victory-hle/src/modules/xmem.rs
+@@ -1062,7 +1062,7 @@
+                 &mut granularity,
+             )
+         };
+-        assert_eq!(watched, 0);
++        assert_eq!(watched == 0, victory_gpu::fault_tracking());
+         // SAFETY: our own reservation.
+         assert_ne!(unsafe { VirtualFree(p, 0, MEM_RELEASE) }, 0);
+         assert_eq!(query(p).flags, 0);

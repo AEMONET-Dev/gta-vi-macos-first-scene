@@ -1,0 +1,164 @@
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index 6c08d75fdebb5dfbffda91601ef7e6d5d82ba2b6..a2ca912325a9d5f2da7ea920631300d59e5480ba 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -552,7 +552,7 @@ impl<'a> Lower<'a> {
+             let wave = if x.native.wave64 { 64 } else { 32 };
+             let one_wave = cs.threads.iter().product::<u32>() <= wave;
+             if console_lanes || one_wave && s.lds_dwords > 0 {
+-                s.wave_size = Some(if spd_wave32 { 32 } else { wave });
++                s.wave_size = Some(if spd_wave32 || super::force_wave32_enabled() { 32 } else { wave });
+             }
+         }
+         let mut no_barrier = HashSet::new();
+@@ -9775,6 +9775,13 @@ impl<'a> Lower<'a> {
+             (true, false) => ("storeVertexOutput", 171),
+             (true, true) => ("storePrimitiveOutput", 172),
+         };
++        // Every value first, then the stores, an element's channels side by
++        // side. Metal's DXIL converter (behind D3DMetal) makes one vector
++        // write of an element's channel stores, where the first of them is:
++        // a channel converted between two stores would be used there before
++        // it exists, which the converter does not notice and the Apple GPU
++        // compiler crashes on (upstream pragyaangaur/VIctory-macOS#167).
++        let mut ready = Vec::with_capacity(stores.len());
+         for (id, col, value, half) in stores {
+             let mut x = self.i32_of(value)?;
+             if let Some(high) = half {
+@@ -9803,15 +9810,19 @@ impl<'a> Lower<'a> {
+                 }
+                 _ => (".i32", x),
+             };
++            ready.push((id, col, suffix, x));
++        }
++        let thread = (mesh && !ready.is_empty()).then(|| self.mesh_thread());
++        // Stable: two stores of one channel keep their order.
++        ready.sort_by_key(|&(id, col, ..)| (id, col));
++        for (id, col, suffix, x) in ready {
+             let mut args = vec![
+                 self.s.m.i32(id as u32),
+                 self.s.m.i32(0),
+                 self.s.m.i8(col),
+                 x,
+             ];
+-            if mesh {
+-                args.push(self.mesh_thread());
+-            }
++            args.extend(thread);
+             let void = self.s.t.void;
+             self.s.op(
+                 self.cur,
+diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
+index 5287a439e7b011e9ecfd096a05bee52105bdcb72..402e48d78f0d428302f42565bf5bce351b2bd1a7 100644
+--- a/crates/victory-shader/src/emit/mod.rs
++++ b/crates/victory-shader/src/emit/mod.rs
+@@ -394,6 +394,95 @@ pub fn spd_wave32_enabled() -> bool {
+     *ENABLED.get_or_init(|| std::env::var_os("VICTORY_SPD_WAVE32").as_deref() == Some(std::ffi::OsStr::new("1")))
+ }
+ 
++/// Forces DXIL WaveSize(32) for wave64 compute shaders on Apple Silicon
++/// (whose Metal GPU hardware SIMD width is 32).
++pub fn force_wave32_enabled() -> bool {
++    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ENABLED.get_or_init(|| std::env::var_os("VICTORY_FORCE_WAVE32").as_deref() == Some(std::ffi::OsStr::new("1")))
++}
++
++/// Coalesces split generic signature elements that share a hardware register
++/// row into one element per row (`VREG<row>`), avoiding Apple Metal's per-element
++/// struct alignment padding that pushes 128-vertex mesh shaders over 32,768 bytes.
++pub fn pack_mesh_outputs_enabled() -> bool {
++    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ENABLED.get_or_init(|| std::env::var_os("VICTORY_PACK_MESH_OUTPUTS").as_deref() == Some(std::ffi::OsStr::new("1")))
++}
++
++fn coalesce_generic_rows(elements: &mut Vec<container::SigElement>) {
++    use std::collections::BTreeMap;
++    // Group indices by hardware register row for eligible generic (`kind == 0`)
++    // f32 rows. Excluding system values (`kind != 0`, e.g. `SV_IsFrontFace` on
++    // a pixel input row) ensures mesh and pixel stages agree on `VREG<row>`.
++    // Restrict to `comp == 9` (f32) so integer semantics (e.g. `COLOR0` u32)
++    // keep their original names and never mismatch across stages.
++    let mut by_row: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
++    for (idx, e) in elements.iter().enumerate() {
++        if e.kind == 0
++            && let Some(r) = e.row
++        {
++            by_row.entry(r).or_default().push(idx);
++        }
++    }
++    let mut coalesced: BTreeMap<u32, container::SigElement> = BTreeMap::new();
++    for (&r, idxs) in &by_row {
++        let first = &elements[idxs[0]];
++        let all_f32 = idxs.iter().all(|&i| {
++            let e = &elements[i];
++            e.kind == 0 && e.comp == 9 && e.interp == first.interp
++        });
++        if !all_f32 {
++            continue;
++        }
++        let any_half = idxs.iter().any(|&i| elements[i].half);
++        if any_half && idxs.len() > 1 {
++            continue;
++        }
++        let max_end = idxs
++            .iter()
++            .map(|&i| elements[i].col + elements[i].cols)
++            .max()
++            .unwrap_or(0)
++            .min(4);
++        if max_end == 0 {
++            continue;
++        }
++        coalesced.insert(
++            r,
++            container::SigElement {
++                name: "VREG".to_owned(),
++                index: r,
++                kind: 0,
++                comp: first.comp,
++                interp: first.interp,
++                row: Some(r),
++                col: if any_half { first.col } else { 0 },
++                cols: if any_half { first.cols } else { max_end },
++                usage: 0,
++                half: any_half,
++            },
++        );
++    }
++    if coalesced.is_empty() {
++        return;
++    }
++    let mut out = Vec::with_capacity(elements.len());
++    let mut emitted = std::collections::HashSet::new();
++    for e in elements.drain(..) {
++        if e.kind == 0
++            && let Some(r) = e.row
++            && let Some(merged) = coalesced.get(&r)
++        {
++            if emitted.insert(r) {
++                out.push(merged.clone());
++            }
++            continue;
++        }
++        out.push(e);
++    }
++    *elements = out;
++}
++
+ /// [`translate`] made as `options` say.
+ pub fn translate_with(container: &[u8], options: Options) -> Result<HostShader, ShaderError> {
+     let c = Container::parse(container)?;
+@@ -474,6 +563,13 @@ pub fn emit_with(
+             e.interp = 5;
+         }
+     }
++    if pack_mesh_outputs_enabled() {
++        if pixel {
++            coalesce_generic_rows(&mut inputs);
++        } else if matches!(native.stage, HwStage::Vs | HwStage::Ms) {
++            coalesce_generic_rows(&mut outputs);
++        }
++    }
+     // Per-primitive outputs are constant. The console never exports a
+     // primitive id or cull flag a mesh shader writes (it culls with the
+     // primitive export), so those rows are left out.

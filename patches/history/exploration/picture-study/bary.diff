@@ -1,0 +1,252 @@
+diff --git a/crates/victory-shader/src/emit/container.rs b/crates/victory-shader/src/emit/container.rs
+index 5baeb1b2c1..bb303fa431 100644
+--- a/crates/victory-shader/src/emit/container.rs
++++ b/crates/victory-shader/src/emit/container.rs
+@@ -44,6 +44,7 @@ impl SigElement {
+             18 => 68,
+             19 => 67,
+             20 => 69,
++            28 => 23, // barycentrics
+             30 => 25, // cull primitive
+             _ => 0,
+         }
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index 53e914cc26..314ff2c64c 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -24,6 +24,18 @@ mod bvh;
+ 
+ type Why = &'static str;
+ 
++fn interpolation_mode(kind: Barycentric) -> Result<u8, Why> {
++    Ok(match kind {
++        Barycentric::PerspectiveCenter => 2,
++        Barycentric::PerspectiveCentroid => 3,
++        Barycentric::PerspectiveSample => 6,
++        Barycentric::LinearCenter => 4,
++        Barycentric::LinearCentroid => 5,
++        Barycentric::LinearSample => 7,
++        Barycentric::PerspectivePullModel => return Err("pull-model interpolation"),
++    })
++}
++
+ #[derive(Debug, Clone, Copy)]
+ enum Val {
+     I32(V),
+@@ -185,6 +197,7 @@ struct Lower<'a> {
+     data_phis: Vec<(V, usize, usize)>,
+     read_phis: HashSet<Value>,
+     params: HashMap<Value, (usize, u32)>,
++    barycentrics: HashMap<Value, (Barycentric, u8)>,
+     user_data: Option<V>,
+     user_reads: BTreeMap<u32, UserData>,
+     /// Handles of root SRVs and UAVs read as bounded views, by user-data
+@@ -589,6 +602,7 @@ impl<'a> Lower<'a> {
+             data_phis: Vec::new(),
+             read_phis: HashSet::new(),
+             params: x.res.params.iter().map(|&(v, p, d)| (v, (p, d))).collect(),
++            barycentrics: HashMap::new(),
+             user_data: None,
+             user_reads: BTreeMap::new(),
+             root_views: HashMap::new(),
+@@ -1371,6 +1385,12 @@ impl<'a> Lower<'a> {
+                 },
+                 Reg::Scc => Val::Missing("SCC on entry"),
+                 Reg::V(_) => match io_inputs.get(&v) {
++                    Some(&Input::Barycentric { kind, index }) => {
++                        // Attribute interpolation only needs a signature input
++                        // when the shader directly reads the coordinates.
++                        self.barycentrics.insert(v, (kind, index));
++                        continue;
++                    }
+                     Some(&input) => self.input(input),
+                     // Registers no one set read as zero (the validator
+                     // refuses reads of undef).
+@@ -1536,6 +1556,47 @@ impl<'a> Lower<'a> {
+         }
+     }
+ 
++    fn barycentric_input(&mut self, kind: Barycentric, index: u8) -> Result<Val, Why> {
++        let mode = interpolation_mode(kind)?;
++        if index >= 2 {
++            return Err("a barycentric component");
++        }
++        let id = if let Some(id) = self
++            .s
++            .inputs
++            .iter()
++            .position(|e| e.kind == 28 && e.interp == mode)
++        {
++            id
++        } else {
++            let perspective = |mode| matches!(mode, 2 | 3 | 6);
++            let mut count = 0;
++            for e in self.s.inputs.iter().filter(|e| e.kind == 28) {
++                if perspective(e.interp) == perspective(mode) {
++                    return Err("two direct barycentric inputs of the same interpolation type");
++                }
++                count += 1;
++            }
++            let id = self.s.inputs.len();
++            self.s.inputs.push(SigElement {
++                name: "SV_Barycentrics".into(),
++                index: count,
++                kind: 28,
++                comp: 9,
++                interp: mode,
++                row: None,
++                col: 0,
++                cols: 3,
++                usage: 0,
++                half: false,
++            });
++            id
++        };
++        self.s.flags |= flags::BARYCENTRICS;
++        // Console I and J weight vertices 1 and 2, which are DXIL's y and z.
++        Ok(self.load_any_input(id, index + 1))
++    }
++
+     /// The DXIL form of an IR value.
+     fn get(&mut self, v: Value) -> Result<Val, Why> {
+         if self.phi_at.contains_key(&v) {
+@@ -1555,6 +1616,11 @@ impl<'a> Lower<'a> {
+             self.vals.insert(v, val);
+             return Ok(val);
+         }
++        if let Some(&(kind, index)) = self.barycentrics.get(&v) {
++            let val = self.barycentric_input(kind, index)?;
++            self.vals.insert(v, val);
++            return Ok(val);
++        }
+         Err("a value defined after its use")
+     }
+ 
+@@ -7117,18 +7183,7 @@ impl<'a> Lower<'a> {
+                 attribute,
+                 barycentric,
+                 ..
+-            } => (
+-                attribute,
+-                match barycentric {
+-                    Barycentric::PerspectiveCenter => 2,
+-                    Barycentric::PerspectiveCentroid => 3,
+-                    Barycentric::PerspectiveSample => 6,
+-                    Barycentric::LinearCenter => 4,
+-                    Barycentric::LinearCentroid => 5,
+-                    Barycentric::LinearSample => 7,
+-                    Barycentric::PerspectivePullModel => return Err("pull-model interpolation"),
+-                },
+-            ),
++            } => (attribute, interpolation_mode(*barycentric)?),
+             // P0, the provoking vertex: a flat (nointerpolation) input.
+             Interp::Vertex {
+                 attribute,
+@@ -9495,7 +9550,15 @@ impl<'a> Lower<'a> {
+                 let qb = self.edges.get(&(q, b)).copied().unwrap_or(qb);
+                 let arg = phi.args[n];
+                 let read = live.contains(&(phi.value, n));
+-                let x = match (self.vals.get(&arg).copied(), bit) {
++                let mut value = self.vals.get(&arg).copied();
++                if read
++                    && value.is_none()
++                    && (self.params.contains_key(&arg) || self.barycentrics.contains_key(&arg))
++                {
++                    // A live phi can be the first read of an entry input.
++                    value = Some(self.get(arg).unwrap_or_else(Val::Missing));
++                }
++                let x = match (value, bit) {
+                     (Some(Val::I32(x)), false) | (Some(Val::Bit(x)), true) => x,
+                     // No lane from this edge reads it, or no lane comes
+                     // along it at all: any value will do.
+diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
+index 498e2aaae4..21bf747d4f 100644
+--- a/crates/victory-shader/src/emit/mod.rs
++++ b/crates/victory-shader/src/emit/mod.rs
+@@ -512,6 +512,7 @@ fn signature(part: &[u8]) -> Result<Vec<container::SigElement>, ShaderError> {
+             8 => 2,
+             9 => 13,
+             10 => 12,
++            23 => 28, // barycentrics
+             64 => 16,
+             65 => 17,
+             66 => 14,
+@@ -865,6 +866,56 @@ mod tests {
+         assert_eq!(sample[4 + 1], 1, "PSInfo.SampleFrequency");
+     }
+ 
++    #[test]
++    fn direct_barycentrics_reach_pixel_export_through_a_join() {
++        let words = [
++            0xBF06_8000u32, // s_cmp_eq_u32 s0, 0
++            0xBF85_0001, // s_cbranch_scc1 to the export
++            0x7E00_0280, // v_mov_b32 v0, 0
++            0xF800_180F,
++            0x0100_0100, // exp mrt0 v0, v1, v0, v1 done vm
++            0xBF81_0000,
++        ];
++        let native = NativeProgram {
++            stage: HwStage::Ps,
++            wave64: false,
++            vgprs: 2,
++            layout: vec![crate::RootParam {
++                root: RootType::Constants,
++                table_offset_dwords: 0,
++                sgprs: 1,
++                base_register: 0,
++                user_data: 0,
++                slot: 0,
++            }],
++            used: vec![],
++            io: StageIo::Ps {
++                inputs: vec![],
++                input_addr: 1 << 1, // Perspective center I and J.
++                db_shader_control: 0,
++                patches: vec![],
++            },
++            code: words.iter().flat_map(|w| w.to_le_bytes()).collect(),
++        };
++        let osg = rows(&[("SV_Target", 16, false)], false);
++        let c = crate::dxbc::build(&[(FourCC::OSG1, &osg)]);
++        let c = Container::parse(&c).unwrap();
++        let p = ir::build(&native.code, false, native.vgprs).unwrap();
++        let st = structure::structure(&p).unwrap();
++        let res = resource::track(&p, &native.layout, native.stage, Some(&st)).unwrap();
++        let io = io::raise(&p, &native).unwrap();
++        let mut shader = emit(&c, &native, &p, &st, &io, &res).unwrap();
++        let output = Container::parse(&shader.dxil).unwrap();
++        let sig = super::signature(output.part(FourCC::ISG1).unwrap().data).unwrap();
++        assert_eq!((sig[0].kind, sig[0].row, sig[0].cols), (28, None, 3));
++        #[cfg(windows)]
++        if let Ok(mut v) = super::validator::Validator::load(
++            super::validator::Validator::default_path().as_deref(),
++        ) {
++            v.validate(&mut shader.dxil).unwrap();
++        }
++    }
++
+     /// Emits a pixel program of `words` with these inputs and signatures.
+     fn emit_pixel(
+         words: &[u32],
+diff --git a/crates/victory-shader/src/emit/shader.rs b/crates/victory-shader/src/emit/shader.rs
+index df97b14bd7..3804c213d5 100644
+--- a/crates/victory-shader/src/emit/shader.rs
++++ b/crates/victory-shader/src/emit/shader.rs
+@@ -38,6 +38,7 @@ pub(crate) mod flags {
+     pub const ROVS: u64 = 1 << 18;
+     pub const WAVE_OPS: u64 = 1 << 19;
+     pub const INT64: u64 = 1 << 20;
++    pub const BARYCENTRICS: u64 = 1 << 22;
+     pub const ATOMIC64_TYPED: u64 = 1 << 27;
+     pub const RESOURCE_HEAP: u64 = 1 << 30;
+     pub const SAMPLER_HEAP: u64 = 1 << 31;
+@@ -826,6 +827,9 @@ impl Shader {
+         if self.flags & flags::INT64 != 0 {
+             features |= 0x8000;
+         }
++        if self.flags & flags::BARYCENTRICS != 0 {
++            features |= 0x2_0000;
++        }
+         if self.flags & flags::RESOURCE_HEAP != 0 {
+             features |= 0x200_0000;
+         }

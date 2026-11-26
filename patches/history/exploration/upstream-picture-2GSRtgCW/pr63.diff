@@ -1,0 +1,158 @@
+diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
+index 460324d..3f60041 100644
+--- a/crates/victory-gpu/src/draw.rs
++++ b/crates/victory-gpu/src/draw.rs
+@@ -2406,6 +2406,40 @@ void main(uint3 id : SV_DispatchThreadID) {
+         }
+     }
+ 
++    /// A texture written through an unordered view and copied into a title
++    /// buffer (a read back) reaches the buffer's title memory once the
++    /// submission has run (#50: the title waited on such a copy).
++    #[test]
++    fn a_texture_copied_to_a_buffer_reaches_title_memory() {
++        let Some(host) = crate::host::host() else {
++            return; // no host GPU here
++        };
++        let slots = Slots::new(1);
++        let address = title_memory(1 << 22);
++        let words = [3, 0, 0, 0, 64, 0, 64, 1 | 1 << 16, 41, 1, 0, 0, 4, 0];
++        let texture = texture_at_address(address, &words);
++        let unordered = View::Unordered(texture as usize, 0, Some([41, 4, 0, 0, 0, 0, 0, 0, 0, 0]));
++        slots.make(0, &unordered);
++        let write = compile_cs(
++            "RWTexture2D<float> o : register(u0);\n[numthreads(8, 8, 1)]\nvoid main(uint3 id : SV_DispatchThreadID) { o[id.xy] = id.x + id.y * 64; }",
++            WRITES,
++        );
++        let dst = buffer(256 * 64);
++        let list = host.new_list().unwrap();
++        readable(&list, &used(ResourceType::Uav), &unordered, false);
++        run(&list, &slots, &write, 0, None, (8, 8));
++        let footprint = crate::resource::PlacedFootprint::new(0, 41, 64, 64, 256);
++        let to = crate::list::CopyLocation::placed(dst, footprint);
++        let from = crate::list::CopyLocation::whole(texture);
++        assert!(crate::list::texture_to_buffer(&list, &to, (0, 0, 0), &from, std::ptr::null()), "recorded");
++        list.close();
++        host.execute(&[&list]);
++        let (bytes, _) = crate::resource::buffer_bytes(dst).unwrap();
++        // SAFETY: inside the buffer: texel (7, 2) at a 256-byte pitch.
++        let got = unsafe { (bytes.add(2 * 256 + 7 * 4) as *const f32).read() };
++        assert_eq!(got, (7 + 2 * 64) as f32);
++    }
++
+     /// A structured view the title places off its buffer's elements (the
+     /// culling constants at a ring position) is made over a copy of its own
+     /// bytes; one on an element views the buffer's copy.
+diff --git a/crates/victory-gpu/src/list.rs b/crates/victory-gpu/src/list.rs
+index 057c331..cb456ac 100644
+--- a/crates/victory-gpu/src/list.rs
++++ b/crates/victory-gpu/src/list.rs
+@@ -522,8 +522,10 @@ extern "system" fn copy_texture_region(
+             return;
+         };
+         let Some(to) = crate::resource::host_resource(dst.resource) else {
+-            static ONCE: std::sync::Once = std::sync::Once::new();
+-            ONCE.call_once(|| tracing::warn!("texture to buffer copies not implemented"));
++            if !texture_to_buffer(list, &dst, (x, y, z), &src, source_box) {
++                static ONCE: std::sync::Once = std::sync::Once::new();
++                ONCE.call_once(|| tracing::warn!("a texture to buffer copy was dropped"));
++            }
+             return;
+         };
+         let mut from = src;
+@@ -607,6 +609,78 @@ extern "system" fn copy_texture_region(
+     let _ = (this, dst, x, y, z, src, source_box);
+ }
+ 
++#[cfg(test)]
++impl CopyLocation {
++    /// A placed footprint in `resource` (tests).
++    pub(crate) fn placed(resource: This, footprint: crate::resource::PlacedFootprint) -> Self {
++        Self { resource, kind: 1, footprint }
++    }
++    /// Subresource 0 of `resource` (tests).
++    pub(crate) fn whole(resource: This) -> Self {
++        Self { resource, kind: 0, footprint: crate::resource::PlacedFootprint::new(0, 0, 0, 0, 0) }
++    }
++}
++
++/// Texture to buffer (a read back): the copy goes on the GPU into the
++/// buffer's host copy, and the copy-back after the submission puts it in
++/// title memory, as for shader writes. The title then reads it, often
++/// waiting on it first (#50: the main thread slept for good right after
++/// these copies were dropped). False if it cannot be done this way.
++#[cfg(windows)]
++pub(crate) fn texture_to_buffer(
++    list: &crate::host::HostList,
++    dst: &CopyLocation,
++    (x, y, z): (u32, u32, u32),
++    src: &CopyLocation,
++    source_box: *const [u32; 6],
++) -> bool {
++    use windows::core::Interface;
++    const FOOTPRINT: u32 = 1;
++    // Placed footprints start on 512-byte boundaries in a host buffer.
++    const PLACEMENT: u64 = 512;
++    if dst.kind != FOOTPRINT || src.kind == FOOTPRINT {
++        return false;
++    }
++    let (Some(bytes), Some(texture)) = (dst.footprint.bytes(), crate::resource::host_resource(src.resource)) else {
++        return false;
++    };
++    let Some(data) = buffer_range(dst.resource, dst.footprint.offset, bytes) else {
++        return false;
++    };
++    let address = data as u64;
++    let Some(shadow) = crate::shadow::find(address, bytes) else {
++        return false;
++    };
++    // SAFETY: a live buffer.
++    let base = unsafe { shadow.buffer.GetGPUVirtualAddress() };
++    let offset = shadow.gpu(address) - base;
++    if offset % PLACEMENT != 0 || shadow.left(address) < bytes {
++        return false;
++    }
++    if crate::texture::title_written(texture) {
++        crate::texture::upload(list, src.resource, texture);
++    }
++    ensure_state(list, src.resource, COPY_SOURCE);
++    // What the copy does not write keeps the title's bytes; what it writes
++    // goes back after the submission.
++    shadow.refresh(list, address, bytes);
++    shadow.gpu_writes(list, address, bytes, false);
++    let mut to = *dst;
++    to.resource = shadow.buffer.as_raw().cast_const().cast();
++    to.footprint.offset = offset;
++    let mut from = *src;
++    from.resource = texture.as_raw().cast_const().cast();
++    let host_box = (!source_box.is_null()).then(|| source_box.cast());
++    #[cfg(feature = "diagnostics")]
++    list.note_op(|| format!("copy texture {:?} to buffer {:?} at {address:#x}, {bytes} bytes", src.resource, dst.resource));
++    // SAFETY: an open list; both locations in the host's layout, naming
++    // live resources; the box is the title's (same layout).
++    unsafe {
++        list.list.CopyTextureRegion((&raw const to).cast(), x, y, z, (&raw const from).cast(), host_box)
++    };
++    true
++}
++
+ #[allow(clippy::too_many_arguments)] // the method's own arguments
+ extern "system" fn copy_texture_region_x(
+     this: This,
+diff --git a/crates/victory-gpu/src/resource.rs b/crates/victory-gpu/src/resource.rs
+index bfe6ce8..63f6507 100644
+--- a/crates/victory-gpu/src/resource.rs
++++ b/crates/victory-gpu/src/resource.rs
+@@ -332,6 +332,12 @@ pub(crate) struct PlacedFootprint {
+ }
+ 
+ impl PlacedFootprint {
++    /// A footprint at `offset` (tests).
++    #[cfg(test)]
++    pub(crate) fn new(offset: u64, format: u32, width: u32, height: u32, row_pitch: u32) -> Self {
++        Self { offset, format, width, height, depth: 1, row_pitch }
++    }
++
+     /// The bytes it spans in a buffer: every row pitched but the last.
+     pub(crate) fn bytes(&self) -> Option<u64> {
+         let (element, block) = element(self.format)?;

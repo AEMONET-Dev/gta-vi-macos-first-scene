@@ -1,0 +1,22 @@
+{
+  "warmups": 10,
+  "measured": 80,
+  "bytes_touched_each_round": 16777216,
+  "full_verification_per_round": true,
+  "roundtrip_ms": {
+    "p50": 0.2657,
+    "p95": 0.2789,
+    "max": 0.7246
+  },
+  "gpu_ms": {
+    "p50": 0.088375,
+    "p95": 0.089375,
+    "max": 0.527292
+  },
+  "fill_and_roundtrip_and_verify_ms": {
+    "p50": 2.1908,
+    "p95": 2.275,
+    "max": 2.6922
+  },
+  "empty_IPC_spin_strategy": "idle server sched_yield, waiting Win32 client SwitchToThread"
+}

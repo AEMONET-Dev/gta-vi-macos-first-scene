@@ -1,0 +1,922 @@
+diff --git a/crates/victory-shader/src/emit/host.rs b/crates/victory-shader/src/emit/host.rs
+index 826c9b51893e780b5c94d07388aff6d2266f1235..2c1c78ac02ef61e141d119aa1c15bbcb3ccc55fe 100644
+--- a/crates/victory-shader/src/emit/host.rs
++++ b/crates/victory-shader/src/emit/host.rs
+@@ -752,6 +752,7 @@ fn fmad_probe() -> Result<HostShader, crate::ShaderError> {
+         prims: Vec::new(),
+         mesh_stride: 0,
+         atomic_locks: false,
++        host_wave32: false,
+         view_marks: false,
+     })?;
+     Ok(HostShader {
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index 6c08d75fdebb5dfbffda91601ef7e6d5d82ba2b6..7c5e1a8a792ec5a7a9c347a82534b1adbb35670f 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -21,6 +21,7 @@ use crate::resource::{Address, CODE, MEMORY, Resources, Role, Site, Source, USER
+ use crate::structure::{Atom, Bool, LaneExit, Structured};
+ 
+ mod bvh;
++mod halves;
+ 
+ type Why = &'static str;
+ 
+@@ -94,6 +95,8 @@ pub(crate) struct Parts<'a> {
+     /// 64-bit image atomics run under per-texel locks (`emit`, "Atomic
+     /// locks").
+     pub atomic_locks: bool,
++    /// The host's waves have at most 32 lanes (`VICTORY_WAVE64_HALVES=1`).
++    pub host_wave32: bool,
+ }
+ 
+ enum Stop {
+@@ -240,8 +243,18 @@ struct Lower<'a> {
+     /// src0 of the current instruction as DPP fetched it.
+     src0: Option<V>,
+     /// Compute code that reads other lanes: thread ids follow the host
+-    /// lanes, so lane n is console lane n.
++    /// lanes, so lane n is console lane n (in [`Lower::halves`], console
++    /// lane n of the half the host wave holds).
+     console_lanes: bool,
++    /// A console wave64 program in host waves of 32 lanes (`halves`).
++    halves: bool,
++    /// Why such a program cannot run in halves.
++    halves_refused: Option<Why>,
++    /// [`Lower::relabelled_flat`], once made.
++    relabelled: Option<V>,
++    /// In halves: VGPR values the same in every lane of the console wave
++    /// ([`halves::lane_uniform`]), whose first lane either half reads.
++    alike: HashSet<Value>,
+     /// Pixel: an ordered section (POPS), whose UAVs the host makes
+     /// rasterizer-ordered views.
+     pops: bool,
+@@ -511,6 +524,7 @@ impl<'a> Lower<'a> {
+         let root_memory = x.res.scalar.iter().any(|s| matches!(s.1.param, MEMORY | USER_DATA))
+             || insts().any(|i| i.name().starts_with("image_bvh"));
+         let mut console_lanes = false;
++        let (mut halves, mut halves_refused) = (false, None);
+         if let StageIo::Cs(cs) = x.native.io {
+             s.threads = Some(cs.threads);
+             s.lds_dwords = cs.lds_bytes() / 4;
+@@ -550,9 +564,19 @@ impl<'a> Lower<'a> {
+                 })
+             };
+             let wave = if x.native.wave64 { 64 } else { 32 };
+-            let one_wave = cs.threads.iter().product::<u32>() <= wave;
+-            if console_lanes || one_wave && s.lds_dwords > 0 {
+-                s.wave_size = Some(if spd_wave32 { 32 } else { wave });
++            let group = cs.threads.iter().product::<u32>();
++            let one_wave = group <= wave;
++            let needs_wave = console_lanes || one_wave && s.lds_dwords > 0;
++            halves = Self::halves_wanted(x, needs_wave);
++            if halves && !super::force_wave32_enabled() {
++                halves_refused = Self::halves_lds(group, s.lds_dwords);
++            }
++            if needs_wave {
++                s.wave_size = Some(if halves || spd_wave32 || super::force_wave32_enabled() {
++                    32
++                } else {
++                    wave
++                });
+             }
+         }
+         let mut no_barrier = HashSet::new();
+@@ -641,6 +665,14 @@ impl<'a> Lower<'a> {
+             heap: [false; 2],
+             src0: None,
+             console_lanes,
++            halves,
++            halves_refused,
++            relabelled: None,
++            alike: if halves {
++                halves::lane_uniform(x)
++            } else {
++                HashSet::new()
++            },
+             spd_wave32,
+             pops: matches!(x.native.io, StageIo::Ps { db_shader_control, .. }
+                 if db_shader_control & 1 << 16 != 0),
+@@ -1087,6 +1119,7 @@ impl<'a> Lower<'a> {
+     /// expanded gives on that wave.
+     fn shape(&mut self, shape: super::wave::Shape) -> Result<V, Why> {
+         use super::wave::{Op, Shape};
++        const ACROSS: Why = "a wave reduction over both 32-lane halves (wave64 on a 32-lane host)";
+         let (op, src, mask, ident, prefix) = match shape {
+             Shape::K(k) => return Ok(self.s.m.i32(k)),
+             Shape::Value(v) => return self.i32_of(v),
+@@ -1107,6 +1140,7 @@ impl<'a> Lower<'a> {
+             Shape::Prefix(op, src, mask, ident, inclusive) => {
+                 (op, src, mask, ident, Some(inclusive))
+             }
++            Shape::Half(..) if self.halves && !super::force_wave32_enabled() => return Err(ACROSS),
+             Shape::Half(_, src, mask, ident, hi) => {
+                 // The high half is a console lane's: compute only.
+                 if self.mask_data != MaskData::Console {
+@@ -1176,6 +1210,7 @@ impl<'a> Lower<'a> {
+         {
+             return Err("a wave reduction in a mesh shader");
+         }
++        self.same_half(ACROSS)?;
+         let c = self.cur;
+         let &m = self
+             .x
+@@ -1269,6 +1304,9 @@ impl<'a> Lower<'a> {
+             }
+         }
+         self.cur = self.s.entry;
++        if let Some(why) = self.halves_refused {
++            return Err(unsupported(0, why));
++        }
+         self.find_sections();
+         self.inputs()?;
+         if let Some(mesh) = self.s.mesh {
+@@ -1824,6 +1862,7 @@ impl<'a> Lower<'a> {
+                     Some(&b) if b == self.cur_ir => self.cur,
+                     Some(&b) => self.tail[b].ok_or("a lane mask written after its use")?,
+                 };
++                self.same_half("a lane mask read as data (wave64 on a 32-lane host)")?;
+                 if !self.balloting.insert(lo) {
+                     return Err("a lane mask whose lanes depend on its own value");
+                 }
+@@ -2566,17 +2605,21 @@ impl<'a> Lower<'a> {
+         self.s.m.bin(c, Bin::Shl, byte, three)
+     }
+ 
+-    /// This lane's bit of the mask `lo`, `hi` (wave64).
++    /// This lane's bit of the mask `lo`, `hi` (wave64), by its console lane.
+     fn lane_bit(&mut self, at: usize, lo: V, hi: Option<V>) -> V {
+         self.s.flags |= flags::WAVE_OPS;
+-        let lane = self.s.op(
+-            at,
+-            "waveGetLaneIndex",
+-            Attr::ReadOnly,
+-            self.s.t.i32,
+-            111,
+-            &[],
+-        );
++        let lane = if self.halves {
++            self.console_lane()
++        } else {
++            self.s.op(
++                at,
++                "waveGetLaneIndex",
++                Attr::ReadOnly,
++                self.s.t.i32,
++                111,
++                &[],
++            )
++        };
+         let (k31, k32, one, z) = (
+             self.s.m.i32(31),
+             self.s.m.i32(32),
+@@ -2842,29 +2885,7 @@ impl<'a> Lower<'a> {
+         }
+         let [x, y, _] = self.s.threads.expect("compute");
+         let e = self.s.entry;
+-        let i32t = self.s.t.i32;
+-        let flat = self.s.op(
+-            e,
+-            "flattenedThreadIdInGroup.i32",
+-            Attr::ReadNone,
+-            i32t,
+-            96,
+-            &[],
+-        );
+-        let first = self.s.op(
+-            e,
+-            "waveReadLaneFirst.i32",
+-            Attr::NoUnwind,
+-            i32t,
+-            118,
+-            &[flat],
+-        );
+-        let wave = self.s.wave_size.expect("set with console lanes");
+-        let mask = self.s.m.i32(!(wave - 1));
+-        let base = self.s.m.bin(e, Bin::And, first, mask);
+-        let lane = self.lane_index();
+-        let f = self.s.m.bin(e, Bin::Add, base, lane);
+-        self.s.flags |= flags::WAVE_OPS;
++        let f = self.relabelled_flat();
+         let (xk, yk, xy) = (self.s.m.i32(x), self.s.m.i32(y), self.s.m.i32(x * y));
+         Val::I32(match c {
+             0 => self.s.m.bin(e, Bin::URem, f, xk),
+@@ -3119,7 +3140,7 @@ impl<'a> Lower<'a> {
+             let a = self.vgprs(inst, addr.as_ref().ok_or("a permute address")?, 1)?[0];
+             let x = self.vgprs(inst, data.first().ok_or("a permute source")?, 1)?[0];
+             let k = |l: &mut Self, v: u32| l.s.m.i32(v);
+-            let (o, two, last) = (k(self, offset), k(self, 2), k(self, self.wave() - 1));
++            let (o, two, last) = (k(self, offset), k(self, 2), k(self, self.permute_lanes()));
+             let at = self.s.m.bin(c, Bin::Add, a, o);
+             let lane = self.s.m.bin(c, Bin::LShr, at, two);
+             let lane = self.s.m.bin(c, Bin::And, lane, last);
+@@ -5793,9 +5814,15 @@ impl<'a> Lower<'a> {
+             }
+         }
+         if let Some((rows, banks)) = masks {
+-            // Row (16 lanes) and bank (4 lanes of a row) write masks.
++            // Row (16 lanes) and bank (4 lanes of a row) write masks. Rows are
++            // the console wave's: in halves the upper half holds rows 2 and 3.
+             let (four, two, three) = (k(self, 4), k(self, 2), k(self, 3));
+-            let ri = self.s.m.bin(c, Bin::LShr, lane, four);
++            let row_lane = if self.halves {
++                self.console_lane()
++            } else {
++                lane
++            };
++            let ri = self.s.m.bin(c, Bin::LShr, row_lane, four);
+             let ri = self.s.m.bin(c, Bin::And, ri, three);
+             let bi = self.s.m.bin(c, Bin::LShr, lane, two);
+             let bi = self.s.m.bin(c, Bin::And, bi, three);
+@@ -6499,6 +6526,9 @@ impl<'a> Lower<'a> {
+                     self.s.flags |= flags::WAVE_OPS;
+                 } else {
+                     self.cross_lane(false)?;
++                    self.same_half(
++                        "a lane read that may cross 32-lane halves (wave64 on a 32-lane host)",
++                    )?;
+                 }
+                 let r = self.read_lane(a, lane);
+                 int(self, r)
+@@ -6514,7 +6544,7 @@ impl<'a> Lower<'a> {
+                     None => self.s.m.i32(0),
+                 };
+                 self.cross_lane(false)?;
+-                let me = self.lane_index();
++                let me = self.console_lane();
+                 let is = self.s.m.cmp(c, pred::EQ, me, lane);
+                 let r = self.s.m.select(c, is, a, old);
+                 int(self, r)
+@@ -6530,6 +6560,17 @@ impl<'a> Lower<'a> {
+                 int(self, a)
+             }
+             "v_readfirstlane_b32" => {
++                // In halves the host wave's first lane is the console's only
++                // for a value the same in both halves, or where the group is
++                // one host wave.
++                if self.halves
++                    && !super::force_wave32_enabled()
++                    && !self.one_host_wave()
++                    && matches!(v.src.first(), Some(&Operand::Vector { reg, .. })
++                        if !inst.read(Reg::V(reg)).is_some_and(|x| self.alike.contains(&x)))
++                {
++                    return Err(halves::FIRST_ACROSS);
++                }
+                 let a = s(self, 0)?;
+                 self.s.flags |= flags::WAVE_OPS;
+                 let r = self.s.op(
+@@ -7647,7 +7688,7 @@ impl<'a> Lower<'a> {
+                 } else if self.s.mesh.is_none() {
+                     self.cross_lane(false)?;
+                 }
+-                let lane = self.lane_index();
++                let lane = self.console_lane();
+                 let below = if name == "v_mbcnt_lo_u32_b32" {
+                     lane
+                 } else {
+@@ -9775,6 +9816,13 @@ impl<'a> Lower<'a> {
+             (true, false) => ("storeVertexOutput", 171),
+             (true, true) => ("storePrimitiveOutput", 172),
+         };
++        // Every value first, then the stores, an element's channels side by
++        // side. Metal's DXIL converter (behind D3DMetal) makes one vector
++        // write of an element's channel stores, where the first of them is:
++        // a channel converted between two stores would be used there before
++        // it exists, which the converter does not notice and the Apple GPU
++        // compiler crashes on (upstream pragyaangaur/VIctory-macOS#167).
++        let mut ready = Vec::with_capacity(stores.len());
+         for (id, col, value, half) in stores {
+             let mut x = self.i32_of(value)?;
+             if let Some(high) = half {
+@@ -9803,15 +9851,19 @@ impl<'a> Lower<'a> {
+                 }
+                 _ => (".i32", x),
+             };
++            ready.push((id, col, suffix, x));
++        }
++        let thread = (mesh && !ready.is_empty()).then(|| self.mesh_thread());
++        // Stable: two stores of one channel keep their order.
++        ready.sort_by_key(|&(id, col, ..)| (id, col));
++        for (id, col, suffix, x) in ready {
+             let mut args = vec![
+                 self.s.m.i32(id as u32),
+                 self.s.m.i32(0),
+                 self.s.m.i8(col),
+                 x,
+             ];
+-            if mesh {
+-                args.push(self.mesh_thread());
+-            }
++            args.extend(thread);
+             let void = self.s.t.void;
+             self.s.op(
+                 self.cur,
+@@ -10491,6 +10543,7 @@ mod tests {
+             prims: vec![],
+             mesh_stride: 0,
+             atomic_locks: false,
++            host_wave32: false,
+             view_marks: false,
+         })
+         .map(|_| ())
+@@ -10553,6 +10606,7 @@ mod tests {
+             prims: vec![],
+             mesh_stride: 0,
+             atomic_locks: false,
++            host_wave32: false,
+             view_marks: false,
+         })
+     }
+@@ -10782,6 +10836,7 @@ mod tests {
+             prims: vec![],
+             mesh_stride: 0,
+             atomic_locks: false,
++            host_wave32: false,
+             view_marks: false,
+         })
+         .unwrap();
+diff --git a/crates/victory-shader/src/emit/lower/halves.rs b/crates/victory-shader/src/emit/lower/halves.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..7857df9e7dc35e56fb7e8d4c640ab538db92e163
+--- /dev/null
++++ b/crates/victory-shader/src/emit/lower/halves.rs
+@@ -0,0 +1,450 @@
++//! Console wave64 compute programs on a host whose waves have at most 32
++//! lanes (NVIDIA, Intel: `WaveLaneCountMax` 32). Such a host refuses
++//! `WaveSize(64)`, which a wave64 program that needs the console's lanes
++//! ([`Lower::console_lanes`]) declares, so its pipeline was never made.
++//!
++//! Each console wave runs as two host waves of 32 lanes ("halves"): the
++//! thread relabelling ([`Lower::thread_id`]) gives each host wave a 32-aligned
++//! run of flat thread ids, so host wave `2w + h` holds console wave `w`'s
++//! lanes `32h..32h + 31`, host lane `n` being console lane `32h + n`. What
++//! a lane reads of its own half is exact; reads into the other half have no
++//! host form and are refused where they are made:
++//!
++//! * within a half, exact: DPP (rows of 16, DPP8 groups of 8), `ds_swizzle`
++//!   (groups of 32 or quads), and `ds_bpermute_b32`, which in wave64 permutes
++//!   each half on its own (RDNA2 ISA, "Data Share Operations"; measured on
++//!   RDNA2 in upstream PR #573, banbanzhige's). A lane's own bit of a mask
++//!   held as a number (a constant, data loaded or computed by scalar code),
++//!   `v_writelane_b32` (the lane named takes the scalar) and the row a DPP
++//!   row mask names (rows 2 and 3 are the upper half's) are decided by the
++//!   console lane ([`Lower::console_lane`]);
++//! * across halves, refused: ballots (a mask read as data holds the other
++//!   half's lanes), `v_readlane_b32` of a lane that may be in the other half
++//!   (SGPR spills read back are not lane reads), and whole-wave reductions
++//!   and prefix sums;
++//! * `v_readfirstlane_b32` reads the host wave's first lane, which in the
++//!   upper half is console lane 32 or later: kept for a value the same in
++//!   every lane of the console wave ([`lane_uniform`], what the compiler
++//!   reads first lanes for) and in a group of 32 threads or fewer (one host
++//!   wave holds the whole console wave), refused otherwise ([`FIRST_ACROSS`]).
++//!
++//! A refusal in a value no instruction ends up needing costs nothing (the
++//! lowering retries with that value missing), so a program is refused only
++//! when it really reads across halves.
++//!
++//! LDS: the console compiler leaves out barriers between the lanes of one
++//! wave, and so between all of a group's threads only when the group is one
++//! wave. A group of 33 to 64 threads with LDS (two host waves sharing what
++//! the console's one wave ordered by itself) is refused; groups of several
++//! console waves order their LDS with barriers, and those of 32 threads or
++//! fewer are one host wave.
++//!
++//! Approach after DexNom's fork (DexNom/Victory 5f4c3df, `set_host_max_wave`
++//! and the thread relabelling into halves) and upstream PR #2176
++//! (n-romanovich: the setting keyed in the shader cache); here the setting
++//! is a translation option ([`super::super::Options::host_wave32`]), and
++//! cross-half reads are refused where they are lowered instead of by
++//! instruction name. Which values are the same in every lane of the console
++//! wave ([`lane_uniform`]): justrealyme's analysis (chippy01/VIctory#1),
++//! ported from fxceless/victory-fork (#497 there).
++
++use super::*;
++
++/// Console lanes per host wave in halves.
++const HALF: u32 = 32;
++
++impl Lower<'_> {
++    /// Whether a wave64 program whose lanes follow the console's runs in
++    /// halves: the host's waves are 32 lanes at most.
++    pub(super) fn halves_wanted(x: &Parts, needs_wave: bool) -> bool {
++        needs_wave && x.native.wave64 && x.host_wave32
++    }
++
++    /// Why a program in halves cannot run: LDS a group of one console wave
++    /// shares without barriers, split across two host waves.
++    pub(super) fn halves_lds(group: u32, lds_dwords: u32) -> Option<Why> {
++        (lds_dwords > 0 && group > HALF && group <= 64)
++            .then_some("LDS one console wave64 shares without barriers, on a host of 32-lane waves")
++    }
++
++    /// The flat thread id, relabelled so that each host wave holds a run of
++    /// [`Shader::wave_size`]-aligned ids from its first lane (see
++    /// [`Lower::thread_id`]); made once, in the entry block.
++    pub(super) fn relabelled_flat(&mut self) -> V {
++        if let Some(f) = self.relabelled {
++            return f;
++        }
++        let e = self.s.entry;
++        let i32t = self.s.t.i32;
++        let flat = self.s.op(
++            e,
++            "flattenedThreadIdInGroup.i32",
++            Attr::ReadNone,
++            i32t,
++            96,
++            &[],
++        );
++        let first = self.s.op(
++            e,
++            "waveReadLaneFirst.i32",
++            Attr::NoUnwind,
++            i32t,
++            118,
++            &[flat],
++        );
++        let wave = self.s.wave_size.expect("set with console lanes");
++        let mask = self.s.m.i32(!(wave - 1));
++        let base = self.s.m.bin(e, Bin::And, first, mask);
++        let lane = self
++            .s
++            .op(e, "waveGetLaneIndex", Attr::ReadOnly, i32t, 111, &[]);
++        let f = self.s.m.bin(e, Bin::Add, base, lane);
++        self.s.flags |= flags::WAVE_OPS;
++        self.relabelled = Some(f);
++        f
++    }
++
++    /// This lane's index in its console wave: the host lane, or in halves
++    /// the host lane in the half the host wave holds.
++    pub(super) fn console_lane(&mut self) -> V {
++        if !self.halves {
++            return self.lane_index();
++        }
++        let f = self.relabelled_flat();
++        let m = self.s.m.i32(self.wave() - 1);
++        self.s.m.bin(self.s.entry, Bin::And, f, m)
++    }
++
++    /// Whether the group fits one host wave: a console wave64 of 32 threads
++    /// or fewer has no lane in the upper half.
++    pub(super) fn one_host_wave(&self) -> bool {
++        self.s
++            .threads
++            .is_some_and(|t| t.iter().product::<u32>() <= HALF)
++    }
++
++    /// Refuses a read into the other half of the console wave in halves
++    /// (unless `VICTORY_FORCE_WAVE32=1` opts into permissive halves).
++    pub(super) fn same_half(&self, what: Why) -> Result<(), Why> {
++        if self.halves && !super::super::force_wave32_enabled() {
++            Err(what)
++        } else {
++            Ok(())
++        }
++    }
++
++    /// The lane mask `ds_bpermute_b32` takes its source lane modulo: in
++    /// halves the host wave, which is the half the console permutes within;
++    /// else the console wave, as before.
++    pub(super) fn permute_lanes(&self) -> u32 {
++        if self.halves {
++            HALF - 1
++        } else {
++            self.wave() - 1
++        }
++    }
++}
++
++/// Why a first-lane read stops in halves: the console's first lane may be
++/// in the other half, and the value is not known to be the same there.
++pub(super) const FIRST_ACROSS: Why = "a first-lane read of a value that may differ between 32-lane halves (wave64 on a 32-lane host)";
++
++/// Every per-lane branch (by its block) with its region: the blocks
++/// reachable from it that do not post-dominate it, which only some lanes
++/// run. Not branches on uniform conditions. None with an indirect exit.
++fn lane_regions(st: &Structured) -> Option<Vec<(usize, Vec<bool>)>> {
++    let n = st.exits.len();
++    let mut succ: Vec<Vec<usize>> = vec![Vec::new(); n];
++    for (b, e) in st.exits.iter().enumerate() {
++        match *e {
++            LaneExit::Jump(t) => succ[b].push(t),
++            LaneExit::Branch {
++                taken, not_taken, ..
++            } => {
++                succ[b].push(taken);
++                succ[b].push(not_taken);
++            }
++            LaneExit::End => {}
++            LaneExit::Indirect => return None,
++        }
++    }
++    // Post-dominators, as bitsets (a virtual exit after every end).
++    let words = n.div_ceil(64);
++    let full = vec![u64::MAX; words];
++    let mut pdom: Vec<Vec<u64>> = (0..n)
++        .map(|b| {
++            if succ[b].is_empty() {
++                let mut v = vec![0; words];
++                v[b / 64] |= 1 << (b % 64);
++                v
++            } else {
++                full.clone()
++            }
++        })
++        .collect();
++    let mut changed = true;
++    while changed {
++        changed = false;
++        for b in (0..n).rev() {
++            if succ[b].is_empty() {
++                continue;
++            }
++            let mut v = full.clone();
++            for &t in &succ[b] {
++                for (w, p) in v.iter_mut().zip(&pdom[t]) {
++                    *w &= p;
++                }
++            }
++            v[b / 64] |= 1 << (b % 64);
++            if v != pdom[b] {
++                pdom[b] = v;
++                changed = true;
++            }
++        }
++    }
++    let mut regions = Vec::new();
++    for (d, e) in st.exits.iter().enumerate() {
++        let LaneExit::Branch { when, .. } = *e else {
++            continue;
++        };
++        if st
++            .bools
++            .support(when)
++            .iter()
++            .all(|a| matches!(a, Atom::Uniform(_)))
++        {
++            continue;
++        }
++        let mut seen = vec![false; n];
++        let mut stack: Vec<usize> = succ[d].clone();
++        while let Some(b) = stack.pop() {
++            if seen[b] || pdom[d][b / 64] >> (b % 64) & 1 == 1 {
++                continue;
++            }
++            seen[b] = true;
++            stack.extend(succ[b].iter().copied());
++        }
++        regions.push((d, seen));
++    }
++    Some(regions)
++}
++
++/// The thread id's x (`v0` on entry) of a wave64 compute program whose
++/// console waves are runs of 64 ids along x (a group 64-aligned along x,
++/// or one row): `id >> 6` and up is one value per console wave.
++fn wave_tid(x: &Parts) -> Option<Value> {
++    let StageIo::Cs(cs) = &x.native.io else {
++        return None;
++    };
++    let [tx, ty, tz] = cs.threads;
++    if !x.native.wave64 || !(tx % 64 == 0 || ty * tz == 1) {
++        return None;
++    }
++    x.p.inputs
++        .iter()
++        .find(|(r, _)| *r == Reg::V(0))
++        .map(|(_, v)| *v)
++}
++
++/// VGPR values that are the same in every lane of a console wave holding
++/// them, so that a first-lane read in either half gives the console's
++/// value: written lane by lane from scalars, constants and such values, by
++/// an instruction every arriving lane runs or that runs under a condition
++/// itself the same in every lane (then only over an old value that is such
++/// a value too); loaded from LDS, or from a buffer through a scalar
++/// descriptor, at such an address; or the thread id's x shifted right past
++/// the console wave ([`wave_tid`]). The console compiler keeps wave-uniform
++/// data in VGPRs and fetches it with `v_readfirstlane` (a typed buffer's
++/// element, say, which only a vector load reads). A scalar is one value,
++/// except the dwords a waterfall loop reads, which are each lane's own.
++///
++/// A phi counts where every predecessor is a block every lane of the wave
++/// reaches together: no branch on a lane-dependent condition can have split
++/// them (a branch on alike values does not). The analysis runs to a fixed
++/// point from nothing, so a loop-carried value that needs itself to be
++/// alike never is.
++pub(super) fn lane_uniform(x: &Parts) -> HashSet<Value> {
++    let (p, st) = (x.p, x.st);
++    let wave_tid = wave_tid(x);
++    let regions = lane_regions(st);
++    let is_mask = |v: Value| st.masks.contains_key(&v) || st.highs.contains_key(&v);
++    let per_lane = |v: Value| x.res.waterfall.reads.contains(&v);
++    let mut same: HashSet<Value> = HashSet::new();
++    loop {
++        let alike_atom = |same: &HashSet<Value>, a: &Atom| match *a {
++            Atom::Uniform(_) => true,
++            Atom::Lane(v) => same.contains(&v),
++            _ => false,
++        };
++        let alike_bool = |same: &HashSet<Value>, b: Bool| {
++            st.bools.support(b).iter().all(|a| alike_atom(same, a))
++        };
++        // Blocks every lane of a console wave reaches together.
++        let wave_all: Vec<bool> = match &regions {
++            Some(regions) => {
++                let mut w = vec![true; st.exits.len()];
++                for (d, region) in regions {
++                    let LaneExit::Branch { when, .. } = st.exits[*d] else {
++                        continue;
++                    };
++                    if alike_bool(&same, when) {
++                        continue;
++                    }
++                    for (b, r) in region.iter().enumerate() {
++                        if *r {
++                            w[b] = false;
++                        }
++                    }
++                }
++                w
++            }
++            None => vec![false; st.exits.len()],
++        };
++        let mut next: HashSet<Value> = HashSet::new();
++        for b in crate::ir::reverse_postorder(&p.blocks) {
++            let block = &p.blocks[b];
++            let whole = block
++                .preds
++                .iter()
++                .all(|&q| wave_all.get(q).copied().unwrap_or(false));
++            for phi in &block.phis {
++                if matches!(phi.reg, Reg::V(_))
++                    && whole
++                    && phi
++                        .args
++                        .iter()
++                        .all(|a| next.contains(a) || same.contains(a))
++                {
++                    next.insert(phi.value);
++                }
++            }
++            let known = |next: &HashSet<Value>, v: &Value| next.contains(v) || same.contains(v);
++            for (i, inst) in block.insts.iter().enumerate() {
++                let name = inst.name();
++                // Under a condition: only one every lane holds alike, and
++                // over an old value that is alike too.
++                if let Some(g) = st.guards[b][i] {
++                    if !alike_bool(&same, g) {
++                        continue;
++                    }
++                    let old_alike = inst
++                        .writes
++                        .iter()
++                        .filter(|w| matches!(w.0, Reg::V(_)))
++                        .all(|w| inst.read(w.0).is_none_or(|old| known(&next, &old)));
++                    if !old_alike {
++                        continue;
++                    }
++                }
++                // A buffer load at an alike index and offset, through a scalar
++                // descriptor, reads one value in every lane.
++                if let Fields::Buffer {
++                    addr,
++                    rsrc,
++                    soffset,
++                    offen,
++                    idxen,
++                    ..
++                } = &inst.fields
++                    && (name.starts_with("buffer_load") || name.starts_with("tbuffer_load"))
++                {
++                    let vector = |op: &Operand| match *op {
++                        Operand::Vector { reg, dwords } => (0..dwords).all(|k| {
++                            inst.read(Reg::V(reg + k))
++                                .is_some_and(|v| known(&next, &v))
++                        }),
++                        _ => true,
++                    };
++                    let scalar = |op: &Operand| match *op {
++                        Operand::Scalar { code, dwords } if code != NULL => (0..dwords)
++                            .all(|k| inst.read(Reg::S(code + k)).is_none_or(|v| !per_lane(v))),
++                        _ => true,
++                    };
++                    if (!(*offen || *idxen) || vector(addr)) && scalar(rsrc) && scalar(soffset) {
++                        next.extend(
++                            inst.writes
++                                .iter()
++                                .filter(|w| matches!(w.0, Reg::V(_)))
++                                .map(|w| w.1),
++                        );
++                    }
++                    continue;
++                }
++                // An LDS read at an alike address reads one value in every lane.
++                if let Fields::Ds {
++                    addr: Some(Operand::Vector { reg, .. }),
++                    dst: Some(_),
++                    data,
++                    ..
++                } = &inst.fields
++                    && name.starts_with("ds_read")
++                    && data.is_empty()
++                {
++                    if inst.read(Reg::V(*reg)).is_some_and(|a| known(&next, &a)) {
++                        next.extend(
++                            inst.writes
++                                .iter()
++                                .filter(|w| matches!(w.0, Reg::V(_)))
++                                .map(|w| w.1),
++                        );
++                    }
++                    continue;
++                }
++                let ops: Vec<Operand> = match &inst.fields {
++                    Fields::Valu(v)
++                        if v.dpp.is_none()
++                            && v.sdwa.is_none()
++                            && !name.starts_with("v_mbcnt")
++                            && !name.starts_with("v_cmpx")
++                            && !name.contains("lane") =>
++                    {
++                        v.src.clone()
++                    }
++                    _ => continue,
++                };
++                // The thread id's x shifted past the console wave: one value
++                // per console wave (the b32 shift uses five bits of its count).
++                if let (
++                    Some(tid),
++                    "v_lshrrev_b32",
++                    [
++                        Operand::Const(k @ 128..=192),
++                        Operand::Vector { reg, .. },
++                        ..,
++                    ],
++                ) = (wave_tid, name, ops.as_slice())
++                    && ((k - 128) & 31) >= 6
++                    && inst.read(Reg::V(*reg)) == Some(tid)
++                {
++                    next.extend(inst.writes.iter().filter(|w| w.0 != Reg::Scc).map(|w| w.1));
++                    continue;
++                }
++                let alike = ops.iter().all(|op| match *op {
++                    Operand::Vector { reg, .. } => {
++                        // every dword the instruction reads from that register on
++                        let read: Vec<Value> = inst
++                            .reads
++                            .iter()
++                            .filter(|r| matches!(r.0, Reg::V(x) if x >= reg))
++                            .map(|r| r.1)
++                            .collect();
++                        !read.is_empty() && read.iter().all(|x| known(&next, x))
++                    }
++                    // A scalar is one value; a lane mask is not, unless a
++                    // compare of alike values made it.
++                    Operand::Scalar { code, .. } if code != NULL => inst
++                        .read(Reg::S(code))
++                        .is_none_or(|x| !is_mask(x) && !per_lane(x) || known(&next, &x)),
++                    _ => true,
++                });
++                if alike {
++                    next.extend(inst.writes.iter().filter(|w| w.0 != Reg::Scc).map(|w| w.1));
++                }
++            }
++        }
++        if next.is_subset(&same) {
++            return same;
++        }
++        same.extend(next);
++    }
++}
+diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
+index 5287a439e7b011e9ecfd096a05bee52105bdcb72..546899518aa64750c86217a3983703515d592b80 100644
+--- a/crates/victory-shader/src/emit/mod.rs
++++ b/crates/victory-shader/src/emit/mod.rs
+@@ -394,6 +394,102 @@ pub fn spd_wave32_enabled() -> bool {
+     *ENABLED.get_or_init(|| std::env::var_os("VICTORY_SPD_WAVE32").as_deref() == Some(std::ffi::OsStr::new("1")))
+ }
+ 
++/// Forces DXIL WaveSize(32) for wave64 compute shaders on Apple Silicon
++/// (whose Metal GPU hardware SIMD width is 32).
++pub fn force_wave32_enabled() -> bool {
++    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ENABLED.get_or_init(|| std::env::var_os("VICTORY_FORCE_WAVE32").as_deref() == Some(std::ffi::OsStr::new("1")))
++}
++
++/// Runs wave64 compute shaders in true 32-lane halves on 32-lane hosts
++/// (Apple Silicon), porting upstream `VIctory-macOS#180` (`lower::halves`).
++pub fn wave64_halves_enabled() -> bool {
++    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ENABLED.get_or_init(|| std::env::var_os("VICTORY_WAVE64_HALVES").as_deref() == Some(std::ffi::OsStr::new("1")))
++}
++
++/// Coalesces split generic signature elements that share a hardware register
++/// row into one element per row (`VREG<row>`), avoiding Apple Metal's per-element
++/// struct alignment padding that pushes 128-vertex mesh shaders over 32,768 bytes.
++pub fn pack_mesh_outputs_enabled() -> bool {
++    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ENABLED.get_or_init(|| std::env::var_os("VICTORY_PACK_MESH_OUTPUTS").as_deref() == Some(std::ffi::OsStr::new("1")))
++}
++
++fn coalesce_generic_rows(elements: &mut Vec<container::SigElement>) {
++    use std::collections::BTreeMap;
++    // Group indices by hardware register row for eligible generic (`kind == 0`)
++    // f32 rows. Excluding system values (`kind != 0`, e.g. `SV_IsFrontFace` on
++    // a pixel input row) ensures mesh and pixel stages agree on `VREG<row>`.
++    // Restrict to `comp == 9` (f32) so integer semantics (e.g. `COLOR0` u32)
++    // keep their original names and never mismatch across stages.
++    let mut by_row: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
++    for (idx, e) in elements.iter().enumerate() {
++        if e.kind == 0
++            && let Some(r) = e.row
++        {
++            by_row.entry(r).or_default().push(idx);
++        }
++    }
++    let mut coalesced: BTreeMap<u32, container::SigElement> = BTreeMap::new();
++    for (&r, idxs) in &by_row {
++        let first = &elements[idxs[0]];
++        let all_f32 = idxs.iter().all(|&i| {
++            let e = &elements[i];
++            e.kind == 0 && e.comp == 9 && e.interp == first.interp
++        });
++        if !all_f32 {
++            continue;
++        }
++        let any_half = idxs.iter().any(|&i| elements[i].half);
++        if any_half && idxs.len() > 1 {
++            continue;
++        }
++        let max_end = idxs
++            .iter()
++            .map(|&i| elements[i].col + elements[i].cols)
++            .max()
++            .unwrap_or(0)
++            .min(4);
++        if max_end == 0 {
++            continue;
++        }
++        coalesced.insert(
++            r,
++            container::SigElement {
++                name: "VREG".to_owned(),
++                index: r,
++                kind: 0,
++                comp: first.comp,
++                interp: first.interp,
++                row: Some(r),
++                col: if any_half { first.col } else { 0 },
++                cols: if any_half { first.cols } else { max_end },
++                usage: 0,
++                half: any_half,
++            },
++        );
++    }
++    if coalesced.is_empty() {
++        return;
++    }
++    let mut out = Vec::with_capacity(elements.len());
++    let mut emitted = std::collections::HashSet::new();
++    for e in elements.drain(..) {
++        if e.kind == 0
++            && let Some(r) = e.row
++            && let Some(merged) = coalesced.get(&r)
++        {
++            if emitted.insert(r) {
++                out.push(merged.clone());
++            }
++            continue;
++        }
++        out.push(e);
++    }
++    *elements = out;
++}
++
+ /// [`translate`] made as `options` say.
+ pub fn translate_with(container: &[u8], options: Options) -> Result<HostShader, ShaderError> {
+     let c = Container::parse(container)?;
+@@ -474,6 +570,13 @@ pub fn emit_with(
+             e.interp = 5;
+         }
+     }
++    if pack_mesh_outputs_enabled() {
++        if pixel {
++            coalesce_generic_rows(&mut inputs);
++        } else if matches!(native.stage, HwStage::Vs | HwStage::Ms) {
++            coalesce_generic_rows(&mut outputs);
++        }
++    }
+     // Per-primitive outputs are constant. The console never exports a
+     // primitive id or cull flag a mesh shader writes (it culls with the
+     // primitive export), so those rows are left out.
+@@ -511,6 +614,7 @@ pub fn emit_with(
+         mesh_stride,
+         view_marks: options.view_marks,
+         atomic_locks: options.atomic_locks,
++        host_wave32: wave64_halves_enabled(),
+     };
+     // The console container identified in the live dispatch as ba578b59c8c28a57.
+     // Its quad reductions and workgroup-shared memory also work with 32 lanes.

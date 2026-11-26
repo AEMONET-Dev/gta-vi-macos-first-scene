@@ -1,0 +1,660 @@
+{
+  "schedule-ornp07qk": {
+    "sha256": "f17dcfb6c1eeb337e832a4f2de5f2d0e1c4161db35e832c4756314f180ea80a1",
+    "relative_start": 8,
+    "world_frame": 1683,
+    "missing_intervals": [],
+    "unparsed": {},
+    "details": "runs/schedule-ornp07qk/render.json",
+    "arms": {
+      "off": {
+        "frames": 14,
+        "frame_p50_ms": 2550.432,
+        "frame_p95_ms": 3955.979,
+        "frame_mean_ms": 2721.359,
+        "draws_p50": 3720.5,
+        "exclusive_mean_ms": {
+          "descriptors": 0.111,
+          "texture_heaps": 483.889,
+          "deferred_buffer_batch": 1290.539,
+          "deferred_other": 238.706,
+          "submit_fence": 472.841,
+          "after_fence_checks": 0.139,
+          "writeback": 180.526,
+          "multiple_submission_stages": 0.0,
+          "queue_wait_only": 0.01,
+          "outside_recorded_submission": 54.599
+        },
+        "nested_mean_ms": {
+          "submission_active": 2666.749,
+          "queue_wait_union": 0.01,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1290.539,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 0.0,
+          "fence_execute_call": 0.0,
+          "fence_signal_call": 0.0,
+          "fence_arm_event_call": 0.0,
+          "fence_wait_return": 0.0,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 0.0,
+          "snapshot_with_declarations": 0.0
+        },
+        "nested_p50_ms": {
+          "submission_active": 2510.746,
+          "queue_wait_union": 0.01,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1218.659,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 0.0,
+          "fence_execute_call": 0.0,
+          "fence_signal_call": 0.0,
+          "fence_arm_event_call": 0.0,
+          "fence_wait_return": 0.0,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 0.0,
+          "snapshot_with_declarations": 0.0
+        }
+      },
+      "on": {
+        "frames": 16,
+        "frame_p50_ms": 3152.863,
+        "frame_p95_ms": 4499.186,
+        "frame_mean_ms": 3206.233,
+        "draws_p50": 4324.5,
+        "exclusive_mean_ms": {
+          "descriptors": 0.261,
+          "texture_heaps": 601.25,
+          "deferred_buffer_batch": 1559.737,
+          "deferred_other": 328.868,
+          "submit_fence": 391.056,
+          "after_fence_checks": 0.1,
+          "writeback": 267.29,
+          "multiple_submission_stages": 0.0,
+          "queue_wait_only": 0.012,
+          "outside_recorded_submission": 57.66
+        },
+        "nested_mean_ms": {
+          "submission_active": 3148.562,
+          "queue_wait_union": 0.012,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1559.737,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 0.0,
+          "fence_execute_call": 0.0,
+          "fence_signal_call": 0.0,
+          "fence_arm_event_call": 0.0,
+          "fence_wait_return": 0.0,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 0.0,
+          "snapshot_with_declarations": 0.0
+        },
+        "nested_p50_ms": {
+          "submission_active": 3073.899,
+          "queue_wait_union": 0.012,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1387.742,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 0.0,
+          "fence_execute_call": 0.0,
+          "fence_signal_call": 0.0,
+          "fence_arm_event_call": 0.0,
+          "fence_wait_return": 0.0,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 0.0,
+          "snapshot_with_declarations": 0.0
+        }
+      }
+    },
+    "hot_resource": {
+      "off": {
+        "n": 0,
+        "successes": 0,
+        "attempts": 0,
+        "elapsed_us": null,
+        "attempted_us": null,
+        "stored_bytes": 0,
+        "requested_bytes": 0
+      },
+      "on": {
+        "n": 0,
+        "successes": 0,
+        "attempts": 0,
+        "elapsed_us": null,
+        "attempted_us": null,
+        "stored_bytes": 0,
+        "requested_bytes": 0
+      }
+    },
+    "actual_snapshot_groups": {}
+  },
+  "xmem-abba-usxk0alo": {
+    "sha256": "da9e3f0bcbdc079165b1f5aec1d1efbdddfbb1cf42888547e1f30ce51f095d2a",
+    "relative_start": 8,
+    "world_frame": 2050,
+    "missing_intervals": [],
+    "unparsed": {},
+    "details": "runs/xmem-abba-usxk0alo/render.json",
+    "arms": {
+      "off": {
+        "frames": 17,
+        "frame_p50_ms": 2799.944,
+        "frame_p95_ms": 5511.334,
+        "frame_mean_ms": 2939.213,
+        "draws_p50": 3336,
+        "exclusive_mean_ms": {
+          "descriptors": 0.15,
+          "texture_heaps": 567.251,
+          "deferred_buffer_batch": 1334.041,
+          "deferred_other": 292.229,
+          "submit_fence": 428.251,
+          "after_fence_checks": 0.13,
+          "writeback": 262.436,
+          "multiple_submission_stages": 0.0,
+          "queue_wait_only": 0.008,
+          "outside_recorded_submission": 54.717
+        },
+        "nested_mean_ms": {
+          "submission_active": 2884.487,
+          "queue_wait_union": 0.008,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1334.041,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 143.521,
+          "fence_execute_call": 0.0,
+          "fence_signal_call": 0.0,
+          "fence_arm_event_call": 0.0,
+          "fence_wait_return": 0.0,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 0.0,
+          "snapshot_with_declarations": 0.0
+        },
+        "nested_p50_ms": {
+          "submission_active": 2759.471,
+          "queue_wait_union": 0.008,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1250.457,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 154.852,
+          "fence_execute_call": 0.0,
+          "fence_signal_call": 0.0,
+          "fence_arm_event_call": 0.0,
+          "fence_wait_return": 0.0,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 0.0,
+          "snapshot_with_declarations": 0.0
+        }
+      },
+      "on": {
+        "frames": 16,
+        "frame_p50_ms": 2601.376,
+        "frame_p95_ms": 5399.985,
+        "frame_mean_ms": 2914.521,
+        "draws_p50": 4443.0,
+        "exclusive_mean_ms": {
+          "descriptors": 0.124,
+          "texture_heaps": 564.745,
+          "deferred_buffer_batch": 1342.425,
+          "deferred_other": 293.329,
+          "submit_fence": 466.788,
+          "after_fence_checks": 0.185,
+          "writeback": 201.275,
+          "multiple_submission_stages": 0.0,
+          "queue_wait_only": 0.007,
+          "outside_recorded_submission": 45.642
+        },
+        "nested_mean_ms": {
+          "submission_active": 2868.871,
+          "queue_wait_union": 0.007,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1342.425,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 157.15,
+          "fence_execute_call": 0.0,
+          "fence_signal_call": 0.0,
+          "fence_arm_event_call": 0.0,
+          "fence_wait_return": 0.0,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 0.0,
+          "snapshot_with_declarations": 0.0
+        },
+        "nested_p50_ms": {
+          "submission_active": 2545.152,
+          "queue_wait_union": 0.007,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1123.035,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 169.906,
+          "fence_execute_call": 0.0,
+          "fence_signal_call": 0.0,
+          "fence_arm_event_call": 0.0,
+          "fence_wait_return": 0.0,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 0.0,
+          "snapshot_with_declarations": 0.0
+        }
+      }
+    },
+    "hot_resource": {
+      "off": {
+        "n": 390,
+        "successes": 0,
+        "attempts": 0,
+        "elapsed_us": {
+          "n": 390,
+          "mean": 6255.59,
+          "p50": 5982.0,
+          "p95": 8419
+        },
+        "attempted_us": {
+          "n": 390,
+          "mean": 0.654,
+          "p50": 1.0,
+          "p95": 1
+        },
+        "stored_bytes": 71156367360,
+        "requested_bytes": 71156367360
+      },
+      "on": {
+        "n": 341,
+        "successes": 337,
+        "attempts": 341,
+        "elapsed_us": {
+          "n": 341,
+          "mean": 7373.167,
+          "p50": 6399,
+          "p95": 11924
+        },
+        "attempted_us": {
+          "n": 341,
+          "mean": 7308.123,
+          "p50": 6399,
+          "p95": 11923
+        },
+        "stored_bytes": 844103680,
+        "requested_bytes": 62216208384
+      }
+    },
+    "actual_snapshot_groups": {}
+  },
+  "xmem-baab-kl4wv5zg": {
+    "sha256": "855cbe3bc4f7b7315dc073c9b840718227fbf47d82c0ea304fe84e9ab997626c",
+    "relative_start": 8,
+    "world_frame": 1601,
+    "missing_intervals": [],
+    "unparsed": {},
+    "details": "runs/xmem-baab-kl4wv5zg/render.json",
+    "arms": {
+      "on": {
+        "frames": 18,
+        "frame_p50_ms": 2716.332,
+        "frame_p95_ms": 5066.855,
+        "frame_mean_ms": 3020.336,
+        "draws_p50": 3001.0,
+        "exclusive_mean_ms": {
+          "descriptors": 0.123,
+          "texture_heaps": 590.225,
+          "deferred_buffer_batch": 1587.374,
+          "deferred_other": 267.745,
+          "submit_fence": 404.741,
+          "after_fence_checks": 0.129,
+          "writeback": 134.434,
+          "multiple_submission_stages": 0.0,
+          "queue_wait_only": 0.009,
+          "outside_recorded_submission": 35.557
+        },
+        "nested_mean_ms": {
+          "submission_active": 2984.771,
+          "queue_wait_union": 0.009,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1587.374,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 162.209,
+          "fence_execute_call": 0.645,
+          "fence_signal_call": 0.077,
+          "fence_arm_event_call": 4.919,
+          "fence_wait_return": 388.414,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 65.002,
+          "snapshot_with_declarations": 65.0
+        },
+        "nested_p50_ms": {
+          "submission_active": 2667.943,
+          "queue_wait_union": 0.008,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1374.854,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 170.878,
+          "fence_execute_call": 0.687,
+          "fence_signal_call": 0.078,
+          "fence_arm_event_call": 4.587,
+          "fence_wait_return": 365.788,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 72.64,
+          "snapshot_with_declarations": 72.639
+        }
+      },
+      "off": {
+        "frames": 16,
+        "frame_p50_ms": 2483.301,
+        "frame_p95_ms": 4000.031,
+        "frame_mean_ms": 2612.479,
+        "draws_p50": 4504.0,
+        "exclusive_mean_ms": {
+          "descriptors": 0.111,
+          "texture_heaps": 450.152,
+          "deferred_buffer_batch": 1291.784,
+          "deferred_other": 250.295,
+          "submit_fence": 466.874,
+          "after_fence_checks": 0.141,
+          "writeback": 125.788,
+          "multiple_submission_stages": 0.0,
+          "queue_wait_only": 0.009,
+          "outside_recorded_submission": 27.326
+        },
+        "nested_mean_ms": {
+          "submission_active": 2585.144,
+          "queue_wait_union": 0.009,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1291.784,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 131.803,
+          "fence_execute_call": 0.598,
+          "fence_signal_call": 0.072,
+          "fence_arm_event_call": 4.096,
+          "fence_wait_return": 453.511,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 62.021,
+          "snapshot_with_declarations": 62.019
+        },
+        "nested_p50_ms": {
+          "submission_active": 2457.472,
+          "queue_wait_union": 0.009,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1260.231,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 147.671,
+          "fence_execute_call": 0.635,
+          "fence_signal_call": 0.074,
+          "fence_arm_event_call": 3.936,
+          "fence_wait_return": 481.064,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 66.879,
+          "snapshot_with_declarations": 66.876
+        }
+      }
+    },
+    "hot_resource": {
+      "off": {
+        "n": 341,
+        "successes": 0,
+        "attempts": 0,
+        "elapsed_us": {
+          "n": 341,
+          "mean": 6183.827,
+          "p50": 5920,
+          "p95": 8491
+        },
+        "attempted_us": {
+          "n": 341,
+          "mean": 0.282,
+          "p50": 0,
+          "p95": 1
+        },
+        "stored_bytes": 62216208384,
+        "requested_bytes": 62216208384
+      },
+      "on": {
+        "n": 416,
+        "successes": 416,
+        "attempts": 416,
+        "elapsed_us": {
+          "n": 416,
+          "mean": 7018.267,
+          "p50": 6088.5,
+          "p95": 10918
+        },
+        "attempted_us": {
+          "n": 416,
+          "mean": 7017.791,
+          "p50": 6088.0,
+          "p95": 10917
+        },
+        "stored_bytes": 99229696,
+        "requested_bytes": 75900125184
+      }
+    },
+    "actual_snapshot_groups": {}
+  },
+  "snapshot-abba-ge6w564l": {
+    "sha256": "855cbe3bc4f7b7315dc073c9b840718227fbf47d82c0ea304fe84e9ab997626c",
+    "relative_start": 8,
+    "world_frame": 1876,
+    "missing_intervals": [],
+    "unparsed": {},
+    "details": "runs/snapshot-abba-ge6w564l/render.json",
+    "arms": {
+      "off": {
+        "frames": 10,
+        "frame_p50_ms": 2666.668,
+        "frame_p95_ms": 3299.882,
+        "frame_mean_ms": 2613.293,
+        "draws_p50": 3075.0,
+        "exclusive_mean_ms": {
+          "descriptors": 0.123,
+          "texture_heaps": 528.624,
+          "deferred_buffer_batch": 1275.655,
+          "deferred_other": 270.722,
+          "submit_fence": 368.614,
+          "after_fence_checks": 0.081,
+          "writeback": 132.869,
+          "multiple_submission_stages": 0.0,
+          "queue_wait_only": 0.011,
+          "outside_recorded_submission": 36.596
+        },
+        "nested_mean_ms": {
+          "submission_active": 2576.687,
+          "queue_wait_union": 0.011,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1275.655,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 135.85,
+          "fence_execute_call": 0.611,
+          "fence_signal_call": 0.077,
+          "fence_arm_event_call": 4.159,
+          "fence_wait_return": 348.805,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 62.12,
+          "snapshot_with_declarations": 62.118
+        },
+        "nested_p50_ms": {
+          "submission_active": 2621.556,
+          "queue_wait_union": 0.012,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1288.152,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 147.879,
+          "fence_execute_call": 0.651,
+          "fence_signal_call": 0.081,
+          "fence_arm_event_call": 3.868,
+          "fence_wait_return": 314.297,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 66.191,
+          "snapshot_with_declarations": 66.189
+        }
+      },
+      "mixed": {
+        "frames": 7,
+        "frame_p50_ms": 2800.038,
+        "frame_p95_ms": 3533.311,
+        "frame_mean_ms": 2709.225,
+        "draws_p50": 2550,
+        "exclusive_mean_ms": {
+          "descriptors": 0.106,
+          "texture_heaps": 522.403,
+          "deferred_buffer_batch": 1317.881,
+          "deferred_other": 251.272,
+          "submit_fence": 456.096,
+          "after_fence_checks": 0.149,
+          "writeback": 127.099,
+          "multiple_submission_stages": 0.0,
+          "queue_wait_only": 0.01,
+          "outside_recorded_submission": 34.21
+        },
+        "nested_mean_ms": {
+          "submission_active": 2675.005,
+          "queue_wait_union": 0.01,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1317.881,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 133.541,
+          "fence_execute_call": 0.597,
+          "fence_signal_call": 0.074,
+          "fence_arm_event_call": 4.955,
+          "fence_wait_return": 436.979,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 56.571,
+          "snapshot_with_declarations": 56.57
+        },
+        "nested_p50_ms": {
+          "submission_active": 2756.806,
+          "queue_wait_union": 0.009,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1416.667,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 146.134,
+          "fence_execute_call": 0.633,
+          "fence_signal_call": 0.076,
+          "fence_arm_event_call": 4.631,
+          "fence_wait_return": 470.064,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 63.72,
+          "snapshot_with_declarations": 63.718
+        }
+      },
+      "on": {
+        "frames": 9,
+        "frame_p50_ms": 2867.594,
+        "frame_p95_ms": 4832.649,
+        "frame_mean_ms": 3096.477,
+        "draws_p50": 4364,
+        "exclusive_mean_ms": {
+          "descriptors": 0.091,
+          "texture_heaps": 408.717,
+          "deferred_buffer_batch": 1742.101,
+          "deferred_other": 279.983,
+          "submit_fence": 505.457,
+          "after_fence_checks": 0.248,
+          "writeback": 123.955,
+          "multiple_submission_stages": 0.0,
+          "queue_wait_only": 0.009,
+          "outside_recorded_submission": 35.914
+        },
+        "nested_mean_ms": {
+          "submission_active": 3060.553,
+          "queue_wait_union": 0.009,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1742.101,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 123.114,
+          "fence_execute_call": 0.577,
+          "fence_signal_call": 0.07,
+          "fence_arm_event_call": 6.793,
+          "fence_wait_return": 488.06,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 52.597,
+          "snapshot_with_declarations": 52.595
+        },
+        "nested_p50_ms": {
+          "submission_active": 2834.192,
+          "queue_wait_union": 0.009,
+          "queue_wait_while_active": 0.0,
+          "buffer_batch_union": 1353.443,
+          "buffer_outside_deferred": 0.0,
+          "hot_copy_union": 137.257,
+          "fence_execute_call": 0.614,
+          "fence_signal_call": 0.076,
+          "fence_arm_event_call": 6.979,
+          "fence_wait_return": 484.614,
+          "fence_without_wait_return": 0.0,
+          "snapshot_union": 63.363,
+          "snapshot_with_declarations": 63.362
+        }
+      }
+    },
+    "hot_resource": {
+      "off": {
+        "n": 554,
+        "successes": 0,
+        "attempts": 0,
+        "elapsed_us": {
+          "n": 554,
+          "mean": 6139.087,
+          "p50": 5863.0,
+          "p95": 8381
+        },
+        "attempted_us": {
+          "n": 554,
+          "mean": 0.004,
+          "p50": 0.0,
+          "p95": 0
+        },
+        "stored_bytes": 101078532096,
+        "requested_bytes": 101078532096
+      },
+      "on": {
+        "n": 0,
+        "successes": 0,
+        "attempts": 0,
+        "elapsed_us": null,
+        "attempted_us": null,
+        "stored_bytes": 0,
+        "requested_bytes": 0
+      }
+    },
+    "actual_snapshot_groups": {
+      "off": {
+        "frames": 14,
+        "snapshot_ms": {
+          "n": 14,
+          "mean": 58.326,
+          "p50": 66.189,
+          "p95": 103.966
+        },
+        "wall_ms": {
+          "n": 14,
+          "mean": 2645.198,
+          "p50": 2800.03,
+          "p95": 3299.882
+        },
+        "declarations": {
+          "n": 14,
+          "mean": 5800.357,
+          "p50": 4878.0,
+          "p95": 16600
+        }
+      },
+      "on": {
+        "frames": 12,
+        "snapshot_ms": {
+          "n": 12,
+          "mean": 56.164,
+          "p50": 63.54,
+          "p95": 78.963
+        },
+        "wall_ms": {
+          "n": 12,
+          "mean": 2994.419,
+          "p50": 2817.037,
+          "p95": 4832.649
+        },
+        "declarations": {
+          "n": 12,
+          "mean": 5916.5,
+          "p50": 5710.0,
+          "p95": 11300
+        }
+      }
+    }
+  }
+}

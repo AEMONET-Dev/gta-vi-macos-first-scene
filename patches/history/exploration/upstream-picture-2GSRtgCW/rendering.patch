@@ -1,0 +1,946 @@
+diff --git a/crates/victory-gpu/src/capture.rs b/crates/victory-gpu/src/capture.rs
+index da04341..e92428a 100644
+--- a/crates/victory-gpu/src/capture.rs
++++ b/crates/victory-gpu/src/capture.rs
+@@ -563,9 +563,10 @@ pub(crate) fn read_indirect(
+ 
+ /// Compare display planes from the same presentation before the window scales them.
+ pub(crate) fn dump_other_planes(frame: u64, planes: &[Vec<crate::object::This>], shown: usize) {
+-    if !listed(frame) || folder().is_none() || !crate::switch::on("VICTORY_CAPTURE_PLANES") { return; }
++    let blend_inputs = crate::switch::on("VICTORY_CAPTURE_BLEND_INPUTS");
++    if !listed(frame) || folder().is_none() || !(blend_inputs || crate::switch::on("VICTORY_CAPTURE_PLANES")) { return; }
+     let Some(host) = crate::host::host() else { return };
+-    for (i, plane) in planes.iter().enumerate().filter(|(i, _)| *i != shown) {
++    for (i, plane) in planes.iter().enumerate().filter(|(i, _)| blend_inputs || *i != shown) {
+         let Some(&resource) = plane.first() else { continue };
+         let Some(copy) = crate::resource::host_copy(resource) else { continue };
+         let state = copy.state.load(std::sync::atomic::Ordering::Relaxed);
+@@ -613,6 +614,22 @@ fn dump_one(
+         }
+         let pitch = f.RowPitch as usize;
+         let rows = std::slice::from_raw_parts(data.cast::<u8>(), pitch * f.Height as usize);
++        // Preserve unmodified RGBA (including the overlay alpha) at common sample
++        // coordinates so the blend can be checked against the presented pixels.
++        if prefix.starts_with("plane-") && crate::switch::on("VICTORY_CAPTURE_BLEND_INPUTS")
++            && matches!(f.Format.0, 27..=29) && let Some(dir) = folder()
++        {
++            let mut sample = Vec::with_capacity(480 * 270 * 4);
++            for y in 0..270 {
++                for x in 0..480 {
++                    let offset = (y * f.Height as usize / 270) * pitch + (x * f.Width as usize / 480) * 4;
++                    sample.extend_from_slice(&rows[offset..offset + 4]);
++                }
++            }
++            if let Err(error) = std::fs::write(dir.join(format!("{prefix}.rgba")), sample) {
++                tracing::warn!(%error, "could not capture the input plane");
++            }
++        }
+         // Tiny targets (exposure, averages): their values as they are.
+         if f.Width * f.Height <= 16 {
+             let texel = crate::resource::element(f.Format.0 as u32).map_or(4, |(b, _)| b as usize);
+diff --git a/crates/victory-gpu/src/composite.rs b/crates/victory-gpu/src/composite.rs
+new file mode 100644
+index 0000000..6e4dbf7
+--- /dev/null
++++ b/crates/victory-gpu/src/composite.rs
+@@ -0,0 +1,374 @@
++//! Draws a presented overlay plane over the picture plane (#15).
++//!
++//! The selected plane provides the base picture at its native resolution.
++//! The other plane can supply full-screen cards, credits and letterboxing.
++//! The result uses `picture * (1 - alpha) + overlay * alpha`, scaling the
++//! other plane to the
++//! picture by its nearest texel. The overlay's alpha is taken as straight
++//! (not premultiplied) until a run with the game shows otherwise.
++//!
++//! The pass is off unless `VICTORY_PRESENT_COMPOSITE=1`: if the overlay
++//! turns out opaque where the picture should show, compositing would bring
++//! the black window back.
++
++use windows::Win32::Graphics::Direct3D12::*;
++use windows::Win32::Graphics::Dxgi::Common::*;
++use windows::core::{Result, s};
++
++/// Whether `VICTORY_PRESENT_COMPOSITE=1` asks for the pass.
++pub(crate) fn wanted() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var("VICTORY_PRESENT_COMPOSITE").is_ok_and(|v| v == "1"))
++}
++
++const SOURCE: &str = r#"
++cbuffer C : register(b0) { uint width; uint height; uint overWidth; uint overHeight; };
++Texture2D<float4> picture : register(t0);
++Texture2D<float4> overlay : register(t1);
++RWTexture2D<float4> result : register(u0);
++[numthreads(8, 8, 1)]
++void main(uint3 id : SV_DispatchThreadID) {
++    if (id.x >= width || id.y >= height) return;
++    float4 p = picture.Load(int3(id.xy, 0));
++    float4 o = overlay.Load(int3(id.x * overWidth / width, id.y * overHeight / height, 0));
++    result[id.xy] = float4(lerp(p.rgb, o.rgb, o.a), 1.0);
++}
++"#;
++
++/// The pass's pipeline and its shader-visible heap of three views
++/// (picture, overlay, result). Presents run one at a time, under the
++/// presenter's lock, and each waits for its list, so one heap serves all.
++pub(crate) struct Compositor {
++    root: ID3D12RootSignature,
++    pso: ID3D12PipelineState,
++    heap: ID3D12DescriptorHeap,
++    step: u32,
++}
++
++impl Compositor {
++    pub(crate) fn new(device: &ID3D12Device) -> Result<Self> {
++        use crate::compute::{Param, srv, uav};
++        let ranges = [srv(0, 2), uav(0, 1)];
++        let params = [
++            Param::Table(&ranges),
++            Param::Constants {
++                register: 0,
++                count: 4,
++            },
++        ];
++        let (root, pso) = crate::compute::pipeline(SOURCE, s!("composite"), 0, &params)?;
++        // SAFETY: plain object creation.
++        unsafe {
++            let heap = device.CreateDescriptorHeap(&D3D12_DESCRIPTOR_HEAP_DESC {
++                Type: D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
++                NumDescriptors: 3,
++                Flags: D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
++                ..Default::default()
++            })?;
++            let step =
++                device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++            Ok(Self {
++                root,
++                pso,
++                heap,
++                step,
++            })
++        }
++    }
++
++    /// Records the pass. `picture` and `overlay` must be in a non-pixel
++    /// shader resource state and `result` (picture-sized, in `format`) in
++    /// the unordered access state; they stay so.
++    #[allow(clippy::too_many_arguments)]
++    pub(crate) fn record(
++        &self,
++        device: &ID3D12Device,
++        list: &ID3D12GraphicsCommandList,
++        picture: (&ID3D12Resource, DXGI_FORMAT),
++        overlay: (&ID3D12Resource, DXGI_FORMAT),
++        result: &ID3D12Resource,
++        format: DXGI_FORMAT,
++    ) {
++        // SAFETY: live resources and our heap of three views.
++        unsafe {
++            let at = self.heap.GetCPUDescriptorHandleForHeapStart();
++            let slot = |i: u32| D3D12_CPU_DESCRIPTOR_HANDLE {
++                ptr: at.ptr + (i * self.step) as usize,
++            };
++            for (i, (texture, format)) in [picture, overlay].into_iter().enumerate() {
++                let view = D3D12_SHADER_RESOURCE_VIEW_DESC {
++                    Format: format,
++                    ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
++                    Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
++                    Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
++                        Texture2D: D3D12_TEX2D_SRV {
++                            MipLevels: 1,
++                            ..Default::default()
++                        },
++                    },
++                };
++                device.CreateShaderResourceView(texture, Some(&view), slot(i as u32));
++            }
++            let view = D3D12_UNORDERED_ACCESS_VIEW_DESC {
++                Format: format,
++                ViewDimension: D3D12_UAV_DIMENSION_TEXTURE2D,
++                ..Default::default()
++            };
++            device.CreateUnorderedAccessView(result, None, Some(&view), slot(2));
++            let (p, o) = (picture.0.GetDesc(), overlay.0.GetDesc());
++            let constants = [p.Width as u32, p.Height, o.Width as u32, o.Height];
++            list.SetDescriptorHeaps(&[Some(self.heap.clone())]);
++            list.SetComputeRootSignature(&self.root);
++            list.SetPipelineState(&self.pso);
++            list.SetComputeRootDescriptorTable(0, self.heap.GetGPUDescriptorHandleForHeapStart());
++            list.SetComputeRoot32BitConstants(1, 4, constants.as_ptr().cast(), 0);
++            list.Dispatch(constants[0].div_ceil(8), constants[1].div_ceil(8), 1);
++        }
++    }
++}
++
++/// A picture-sized texture the pass writes, in `format`.
++pub(crate) fn result_texture(
++    device: &ID3D12Device,
++    width: u64,
++    height: u32,
++    format: DXGI_FORMAT,
++) -> Result<ID3D12Resource> {
++    let mut texture: Option<ID3D12Resource> = None;
++    // SAFETY: plain creation.
++    unsafe {
++        device.CreateCommittedResource(
++            &D3D12_HEAP_PROPERTIES {
++                Type: D3D12_HEAP_TYPE_DEFAULT,
++                ..Default::default()
++            },
++            D3D12_HEAP_FLAG_NONE,
++            &D3D12_RESOURCE_DESC {
++                Dimension: D3D12_RESOURCE_DIMENSION_TEXTURE2D,
++                Width: width,
++                Height: height,
++                DepthOrArraySize: 1,
++                MipLevels: 1,
++                Format: format,
++                SampleDesc: DXGI_SAMPLE_DESC {
++                    Count: 1,
++                    Quality: 0,
++                },
++                Flags: D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
++                ..Default::default()
++            },
++            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++            None,
++            &mut texture,
++        )?;
++    }
++    texture.ok_or_else(windows::core::Error::empty)
++}
++
++/// The format the pass writes and the swap chain shows for a picture whose
++/// swap format is `format`: typed stores to BGRA are optional in D3D12, so
++/// BGRA becomes RGBA (the shader reads and writes colors by name, so the
++/// picture keeps its colors).
++pub(crate) fn result_format(format: DXGI_FORMAT) -> DXGI_FORMAT {
++    if format == DXGI_FORMAT_B8G8R8A8_UNORM {
++        DXGI_FORMAT_R8G8B8A8_UNORM
++    } else {
++        format
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::host::transition;
++
++    /// A buffer of `len` bytes in `heap`, in `state`.
++    fn buffer(heap: D3D12_HEAP_TYPE, len: u64, state: D3D12_RESOURCE_STATES) -> ID3D12Resource {
++        let device = &crate::host::host().unwrap().device;
++        let mut buffer: Option<ID3D12Resource> = None;
++        // SAFETY: plain creation.
++        unsafe {
++            device
++                .CreateCommittedResource(
++                    &D3D12_HEAP_PROPERTIES {
++                        Type: heap,
++                        ..Default::default()
++                    },
++                    D3D12_HEAP_FLAG_NONE,
++                    &D3D12_RESOURCE_DESC {
++                        Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
++                        Width: len,
++                        Height: 1,
++                        DepthOrArraySize: 1,
++                        MipLevels: 1,
++                        SampleDesc: DXGI_SAMPLE_DESC {
++                            Count: 1,
++                            Quality: 0,
++                        },
++                        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
++                        ..Default::default()
++                    },
++                    state,
++                    None,
++                    &mut buffer,
++                )
++                .unwrap();
++        }
++        buffer.unwrap()
++    }
++
++    /// A copy location for `texture`'s first subresource.
++    fn whole(texture: &ID3D12Resource) -> D3D12_TEXTURE_COPY_LOCATION {
++        D3D12_TEXTURE_COPY_LOCATION {
++            // SAFETY: a borrowed pointer the location never releases.
++            pResource: unsafe { std::mem::transmute_copy(texture) },
++            Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
++            Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
++                SubresourceIndex: 0,
++            },
++        }
++    }
++
++    /// A copy location for 8-bit RGBA rows at a 256-byte pitch in `buffer`.
++    fn rows(buffer: &ID3D12Resource, width: u32, height: u32) -> D3D12_TEXTURE_COPY_LOCATION {
++        D3D12_TEXTURE_COPY_LOCATION {
++            // SAFETY: a borrowed pointer the location never releases.
++            pResource: unsafe { std::mem::transmute_copy(buffer) },
++            Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
++            Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
++                PlacedFootprint: D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
++                    Offset: 0,
++                    Footprint: D3D12_SUBRESOURCE_FOOTPRINT {
++                        Format: DXGI_FORMAT_R8G8B8A8_UNORM,
++                        Width: width,
++                        Height: height,
++                        Depth: 1,
++                        RowPitch: 256,
++                    },
++                },
++            },
++        }
++    }
++
++    /// An 8-bit RGBA texture of `width` x `height` holding `texels`, left
++    /// in the non-pixel shader resource state; its upload buffer is kept.
++    fn texture(
++        width: u32,
++        height: u32,
++        texels: &[[u8; 4]],
++        list: &ID3D12GraphicsCommandList,
++        keep: &mut Vec<ID3D12Resource>,
++    ) -> ID3D12Resource {
++        let device = &crate::host::host().unwrap().device;
++        let texture =
++            result_texture(device, width.into(), height, DXGI_FORMAT_R8G8B8A8_UNORM).unwrap();
++        let upload = buffer(
++            D3D12_HEAP_TYPE_UPLOAD,
++            256 * u64::from(height),
++            D3D12_RESOURCE_STATE_GENERIC_READ,
++        );
++        let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
++        // SAFETY: a mapped upload buffer written in bounds; an open list and
++        // copy locations naming live resources.
++        unsafe {
++            upload.Map(0, None, Some(&mut data)).unwrap();
++            for y in 0..height {
++                for x in 0..width {
++                    let at = data.cast::<u8>().add((y * 256 + x * 4) as usize);
++                    std::ptr::copy_nonoverlapping(texels[(y * width + x) as usize].as_ptr(), at, 4);
++                }
++            }
++            list.ResourceBarrier(&[transition(
++                &texture,
++                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++                D3D12_RESOURCE_STATE_COPY_DEST,
++            )]);
++            list.CopyTextureRegion(
++                &whole(&texture),
++                0,
++                0,
++                0,
++                &rows(&upload, width, height),
++                None,
++            );
++            list.ResourceBarrier(&[transition(
++                &texture,
++                D3D12_RESOURCE_STATE_COPY_DEST,
++                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++            )]);
++        }
++        keep.push(upload);
++        texture
++    }
++
++    /// A 4x4 red picture under a 2x2 overlay whose top-left texel is opaque
++    /// green, top-right half-transparent blue and the rest clear: each
++    /// overlay texel covers a 2x2 block of the picture.
++    #[test]
++    fn the_overlay_is_blended_over_the_picture() {
++        let Some(host) = crate::host::host() else {
++            return; // no host GPU here
++        };
++        eprintln!("using host GPU for the_overlay_is_blended_over_the_picture");
++        let device = &host.device;
++        let compositor = Compositor::new(device).expect("the pass compiles");
++        let run = host.new_list().unwrap();
++        let list = &run.list;
++        let mut keep = Vec::new();
++        let picture = texture(4, 4, &[[255, 0, 0, 255]; 16], list, &mut keep);
++        let clear = [9, 9, 9, 0];
++        let overlay = texture(
++            2,
++            2,
++            &[[0, 255, 0, 255], [0, 0, 255, 128], clear, clear],
++            list,
++            &mut keep,
++        );
++        let format = DXGI_FORMAT_R8G8B8A8_UNORM;
++        let result = result_texture(device, 4, 4, format).unwrap();
++        compositor.record(
++            device,
++            list,
++            (&picture, format),
++            (&overlay, format),
++            &result,
++            format,
++        );
++        let back = buffer(
++            D3D12_HEAP_TYPE_READBACK,
++            256 * 4,
++            D3D12_RESOURCE_STATE_COPY_DEST,
++        );
++        // SAFETY: an open list and live resources.
++        unsafe {
++            list.ResourceBarrier(&[transition(
++                &result,
++                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++                D3D12_RESOURCE_STATE_COPY_SOURCE,
++            )]);
++            list.CopyTextureRegion(&rows(&back, 4, 4), 0, 0, 0, &whole(&result), None);
++        }
++        run.close();
++        host.execute(&[&run]);
++        let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
++        // SAFETY: a finished readback buffer.
++        unsafe { back.Map(0, None, Some(&mut data)) }.unwrap();
++        // SAFETY: inside the mapped buffer: 4 rows at a 256-byte pitch.
++        let texel = |x: usize, y: usize| unsafe { *data.cast::<[u8; 4]>().add(y * 64 + x) };
++        for (x, y) in [(0, 0), (1, 1)] {
++            assert_eq!(
++                texel(x, y),
++                [0, 255, 0, 255],
++                "opaque overlay at ({x}, {y})"
++            );
++        }
++        let half = texel(3, 0);
++        assert!(
++            half[0].abs_diff(127) <= 1 && half[1] == 0 && half[2].abs_diff(128) <= 1,
++            "half blue over red: {half:?}"
++        );
++        for (x, y) in [(0, 2), (3, 3)] {
++            assert_eq!(texel(x, y), [255, 0, 0, 255], "clear overlay at ({x}, {y})");
++        }
++    }
++}
+diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
+index 27d33b3..8db1831 100644
+--- a/crates/victory-gpu/src/draw.rs
++++ b/crates/victory-gpu/src/draw.rs
+@@ -2550,6 +2550,41 @@ void main(uint3 id : SV_DispatchThreadID) {
+         }
+     }
+ 
++    /// A texture written through an unordered view and copied into a title
++    /// buffer (a read back) reaches the buffer's title memory once the
++    /// submission has run (#50: the title waited on such a copy).
++    #[test]
++    fn a_texture_copied_to_a_buffer_reaches_title_memory() {
++        let Some(host) = crate::host::host() else {
++            return; // no host GPU here
++        };
++        eprintln!("using host GPU for a_texture_copied_to_a_buffer_reaches_title_memory");
++        let slots = Slots::new(1);
++        let address = title_memory(1 << 22);
++        let words = [3, 0, 0, 0, 64, 0, 64, 1 | 1 << 16, 41, 1, 0, 0, 4, 0];
++        let texture = texture_at_address(address, &words);
++        let unordered = View::Unordered(texture as usize, 0, Some([41, 4, 0, 0, 0, 0, 0, 0, 0, 0]));
++        slots.make(0, &unordered);
++        let write = compile_cs(
++            "RWTexture2D<float> o : register(u0);\n[numthreads(8, 8, 1)]\nvoid main(uint3 id : SV_DispatchThreadID) { o[id.xy] = id.x + id.y * 64; }",
++            WRITES,
++        );
++        let dst = buffer(256 * 64);
++        let list = host.new_list().unwrap();
++        readable(&list, &used(ResourceType::Uav), &unordered, false);
++        run(&list, &slots, &write, 0, None, (8, 8));
++        let footprint = crate::resource::PlacedFootprint::new(0, 41, 64, 64, 256);
++        let to = crate::list::CopyLocation::placed(dst, footprint);
++        let from = crate::list::CopyLocation::whole(texture);
++        assert!(crate::list::texture_to_buffer(&list, &to, (0, 0, 0), &from, std::ptr::null()), "recorded");
++        list.close();
++        host.execute(&[&list]);
++        let (bytes, _) = crate::resource::buffer_bytes(dst).unwrap();
++        // SAFETY: inside the buffer: texel (7, 2) at a 256-byte pitch.
++        let got = unsafe { (bytes.add(2 * 256 + 7 * 4) as *const f32).read() };
++        assert_eq!(got, (7 + 2 * 64) as f32);
++    }
++
+     /// A structured view the title places off its buffer's elements (the
+     /// culling constants at a ring position) is made over a copy of its own
+     /// bytes; one on an element views the buffer's copy.
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index ef5356a..aa40683 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -2568,6 +2568,10 @@ struct Presenter {
+     copy: HostList,
+     hwnd: HWND,
+     meter: Meter,
++    /// The overlay blend pass, once tried (#15).
++    compositor: Option<std::result::Result<crate::composite::Compositor, ()>>,
++    /// The texture the blend pass writes.
++    blended: Option<ID3D12Resource>,
+ }
+ 
+ /// The frame rate, shown in the window's caption every second and logged
+@@ -2714,15 +2718,34 @@ impl Meter {
+ 
+ impl Host {
+     /// Shows `texture`, which is in `state` (a host state) and stays in it,
+-    /// as frame `frame` (saved if captures are on). `None` if nothing was
+-    /// shown; else, in diagnostics builds, whether the frame was black.
+-    pub(crate) fn present(&self, texture: &ID3D12Resource, state: u32, frame: u64) -> Option<bool> {
++    /// as frame `frame` (saved if captures are on), with `overlay` (a
++    /// texture and its host state, which it keeps) blended over it when
++    /// `VICTORY_PRESENT_COMPOSITE=1`. `None` if nothing was shown; else, in
++    /// diagnostics builds, whether the frame was black.
++    pub(crate) fn present(
++        &self,
++        texture: &ID3D12Resource,
++        state: u32,
++        overlay: Option<(&ID3D12Resource, u32)>,
++        frame: u64,
++    ) -> Option<bool> {
+         // SAFETY: a live resource.
+         let desc = unsafe { texture.GetDesc() };
+-        let Some(format) = swap_format(desc.Format) else {
++        let Some(picture_format) = swap_format(desc.Format) else {
+             tracing::warn!(format = desc.Format.0, "cannot present this format");
+             return None;
+         };
++        // The overlay with its view format, when it is to be blended in.
++        let overlay = overlay.filter(|_| crate::composite::wanted()).and_then(|(o, s)| {
++            // SAFETY: a live resource.
++            let f = swap_format(unsafe { o.GetDesc() }.Format)?;
++            Some((o, s, f))
++        });
++        let format = if overlay.is_some() {
++            crate::composite::result_format(picture_format)
++        } else {
++            picture_format
++        };
+         let (width, height) = (desc.Width as u32, desc.Height);
+         let mut presentation = self.presenter.lock().unwrap_or_else(|e| e.into_inner());
+         let Presentation { presenter, retry } = &mut *presentation;
+@@ -2738,6 +2761,29 @@ impl Host {
+             };
+         }
+         let p = presenter.as_mut()?;
++        // The blend pass and the texture it writes, made on first use.
++        let mut blended = None;
++        if let Some(overlay) = overlay {
++            if p.compositor.is_none() {
++                p.compositor = Some(crate::composite::Compositor::new(&self.device).map_err(|e| {
++                    tracing::warn!(error = %e, "no overlay blending: the pass did not compile");
++                }));
++            }
++            if let Some(Ok(compositor)) = &p.compositor {
++                let current = p.blended.as_ref().is_some_and(|t| {
++                    // SAFETY: a live resource.
++                    let d = unsafe { t.GetDesc() };
++                    (d.Width, d.Height, d.Format) == (desc.Width, desc.Height, format)
++                });
++                if !current {
++                    p.blended =
++                        crate::composite::result_texture(&self.device, desc.Width, desc.Height, format).ok();
++                }
++                if let Some(result) = &p.blended {
++                    blended = Some((compositor, result.clone(), overlay));
++                }
++            }
++        }
+         // What is presented, whenever it changes: the title's texture in its
+         // host format, and the swap chain format it is copied into.
+         static SHOWN: Mutex<Option<(u64, u32, i32)>> = Mutex::new(None);
+@@ -2786,14 +2832,32 @@ impl Host {
+             };
+             p.copy.reset();
+             let list = &p.copy.list;
+-            list.ResourceBarrier(&[
+-                transition(texture, state, D3D12_RESOURCE_STATE_COPY_SOURCE),
+-                transition(
+-                    &back,
+-                    D3D12_RESOURCE_STATE_PRESENT,
+-                    D3D12_RESOURCE_STATE_COPY_DEST,
+-                ),
+-            ]);
++            const READ: D3D12_RESOURCE_STATES = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
++            // What is copied to the back buffer: the blend or the picture,
++            // and the state it returns to afterwards.
++            let (source, state) = match &blended {
++                Some((compositor, result, (o, ostate, oformat))) => {
++                    let ostate = D3D12_RESOURCE_STATES(*ostate as i32);
++                    list.ResourceBarrier(&[transition(texture, state, READ), transition(o, ostate, READ)]);
++                    compositor.record(&self.device, list, (texture, picture_format), (o, *oformat), result, format);
++                    list.ResourceBarrier(&[
++                        transition(texture, READ, state),
++                        transition(o, READ, ostate),
++                        transition(result, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE),
++                    ]);
++                    (result.clone(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
++                }
++                None => {
++                    list.ResourceBarrier(&[transition(texture, state, D3D12_RESOURCE_STATE_COPY_SOURCE)]);
++                    (texture.clone(), state)
++                }
++            };
++            let texture = &source;
++            list.ResourceBarrier(&[transition(
++                &back,
++                D3D12_RESOURCE_STATE_PRESENT,
++                D3D12_RESOURCE_STATE_COPY_DEST,
++            )]);
+             list.CopyResource(&back, texture);
+             #[cfg(feature = "diagnostics")]
+             let capture = crate::capture::wanted(frame)
+@@ -2881,6 +2945,8 @@ impl Host {
+                 copy,
+                 hwnd,
+                 meter: Meter::new(),
++                compositor: None,
++                blended: None,
+             })
+         }
+     }
+diff --git a/crates/victory-gpu/src/lib.rs b/crates/victory-gpu/src/lib.rs
+index 8d07638..e235d98 100644
+--- a/crates/victory-gpu/src/lib.rs
++++ b/crates/victory-gpu/src/lib.rs
+@@ -22,6 +22,8 @@ mod bindless;
+ mod capture;
+ #[cfg(windows)]
+ #[cfg(windows)]
++mod composite;
++#[cfg(windows)]
+ mod compute;
+ pub mod console;
+ #[cfg(all(windows, feature = "diagnostics"))]
+diff --git a/crates/victory-gpu/src/list.rs b/crates/victory-gpu/src/list.rs
+index 057c331..799ac18 100644
+--- a/crates/victory-gpu/src/list.rs
++++ b/crates/victory-gpu/src/list.rs
+@@ -522,8 +522,14 @@ extern "system" fn copy_texture_region(
+             return;
+         };
+         let Some(to) = crate::resource::host_resource(dst.resource) else {
+-            static ONCE: std::sync::Once = std::sync::Once::new();
+-            ONCE.call_once(|| tracing::warn!("texture to buffer copies not implemented"));
++            if !texture_to_buffer(list, &dst, (x, y, z), &src, source_box) {
++                static ONCE: std::sync::Once = std::sync::Once::new();
++                ONCE.call_once(|| tracing::warn!(
++                    dst_kind = dst.kind, src_kind = src.kind, footprint = ?dst.footprint,
++                    dst_size = ?crate::resource::buffer_bytes(dst.resource).map(|(_, size)| size),
++                    x, y, z, "a texture to buffer copy was dropped"
++                ));
++            }
+             return;
+         };
+         let mut from = src;
+@@ -607,6 +613,83 @@ extern "system" fn copy_texture_region(
+     let _ = (this, dst, x, y, z, src, source_box);
+ }
+ 
++#[cfg(test)]
++impl CopyLocation {
++    /// A placed footprint in `resource` (tests).
++    pub(crate) fn placed(resource: This, footprint: crate::resource::PlacedFootprint) -> Self {
++        Self { resource, kind: 1, footprint }
++    }
++    /// Subresource 0 of `resource` (tests).
++    pub(crate) fn whole(resource: This) -> Self {
++        Self { resource, kind: 0, footprint: crate::resource::PlacedFootprint::new(0, 0, 0, 0, 0) }
++    }
++}
++
++/// Texture to buffer (a read back): the copy goes on the GPU into the
++/// buffer's host copy, and the copy-back after the submission puts it in
++/// title memory, as for shader writes. The title then reads it, often
++/// waiting on it first (#50: the main thread slept for good right after
++/// these copies were dropped). False if it cannot be done this way.
++#[cfg(windows)]
++pub(crate) fn texture_to_buffer(
++    list: &crate::host::HostList,
++    dst: &CopyLocation,
++    (x, y, z): (u32, u32, u32),
++    src: &CopyLocation,
++    source_box: *const [u32; 6],
++) -> bool {
++    use windows::core::Interface;
++    const FOOTPRINT: u32 = 1;
++    // Placed footprints start on 512-byte boundaries in a host buffer.
++    const PLACEMENT: u64 = 512;
++    if dst.kind != FOOTPRINT || src.kind == FOOTPRINT {
++        return false;
++    }
++    let (Some(bytes), Some(texture)) = (dst.footprint.bytes(), crate::resource::host_resource(src.resource)) else {
++        return false;
++    };
++    let Some(data) = buffer_range(dst.resource, dst.footprint.offset, bytes) else {
++        return false;
++    };
++    let address = data as u64;
++    let Some(shadow) = crate::shadow::find(address, bytes) else {
++        return false;
++    };
++    // SAFETY: a live buffer.
++    let base = unsafe { shadow.buffer.GetGPUVirtualAddress() };
++    let offset = shadow.gpu(address) - base;
++    if offset % PLACEMENT != 0 || shadow.left(address) < bytes {
++        return false;
++    }
++    #[cfg(feature = "diagnostics")]
++    {
++        static FIRST: std::sync::Once = std::sync::Once::new();
++        FIRST.call_once(|| tracing::info!(bytes, "recording a texture readback into game memory"));
++    }
++    if crate::texture::title_written(texture) {
++        crate::texture::upload(list, src.resource, texture);
++    }
++    ensure_state(list, src.resource, COPY_SOURCE);
++    // What the copy does not write keeps the title's bytes; what it writes
++    // goes back after the submission.
++    shadow.refresh(list, address, bytes);
++    shadow.gpu_writes(list, address, bytes, false);
++    let mut to = *dst;
++    to.resource = shadow.buffer.as_raw().cast_const().cast();
++    to.footprint.offset = offset;
++    let mut from = *src;
++    from.resource = texture.as_raw().cast_const().cast();
++    let host_box = (!source_box.is_null()).then(|| source_box.cast());
++    #[cfg(feature = "diagnostics")]
++    list.note_op(|| format!("copy texture {:?} to buffer {:?} at {address:#x}, {bytes} bytes", src.resource, dst.resource));
++    // SAFETY: an open list; both locations in the host's layout, naming
++    // live resources; the box is the title's (same layout).
++    unsafe {
++        list.list.CopyTextureRegion((&raw const to).cast(), x, y, z, (&raw const from).cast(), host_box)
++    };
++    true
++}
++
+ #[allow(clippy::too_many_arguments)] // the method's own arguments
+ extern "system" fn copy_texture_region_x(
+     this: This,
+diff --git a/crates/victory-gpu/src/queue.rs b/crates/victory-gpu/src/queue.rs
+index c95820d..8ff1481 100644
+--- a/crates/victory-gpu/src/queue.rs
++++ b/crates/victory-gpu/src/queue.rs
+@@ -387,7 +387,7 @@ extern "system" fn present(
+     #[cfg(all(windows, feature = "diagnostics"))]
+     if let Some(preview) = crate::capture::take_preview()
+         && let Some(host) = crate::host::host()
+-        && host.present(&preview.texture, preview.state.load(Ordering::Relaxed), frame).is_some()
++        && host.present(&preview.texture, preview.state.load(Ordering::Relaxed), None, frame).is_some()
+     {
+         return S_OK;
+     }
+@@ -399,7 +399,21 @@ extern "system" fn present(
+         const COPY_SOURCE: u32 = 0x800;
+         let state = crate::resource::host_transition(resource, COPY_SOURCE)
+             .map_or(COPY_SOURCE, |(_, before)| before);
+-        let shown = host.present(texture, state, frame);
++        // The other plane's first resource, blended over the picture when
++        // `VICTORY_PRESENT_COMPOSITE=1` (#15).
++        let other = (found.len() == 2)
++            .then(|| found[1 - shown].first().copied())
++            .flatten()
++            .filter(|&o| o != resource && crate::composite::wanted())
++            .and_then(|o| Some((o, crate::resource::host_resource(o)?)));
++        let overlay_state = other.map(|(o, _)| {
++            crate::resource::host_transition(o, COPY_SOURCE).map_or(COPY_SOURCE, |(_, before)| before)
++        });
++        let overlay = other.zip(overlay_state).map(|((_, t), s)| (t, s));
++        let shown = host.present(texture, state, overlay, frame);
++        if let Some(((o, _), s)) = other.zip(overlay_state) {
++            crate::resource::host_transition(o, s);
++        }
+         crate::resource::host_transition(resource, state);
+         #[cfg(feature = "diagnostics")]
+         blinks(frame, resource, state, shown);
+diff --git a/crates/victory-gpu/src/resource.rs b/crates/victory-gpu/src/resource.rs
+index 559fd80..bcf6611 100644
+--- a/crates/victory-gpu/src/resource.rs
++++ b/crates/victory-gpu/src/resource.rs
+@@ -332,6 +332,12 @@ pub(crate) struct PlacedFootprint {
+ }
+ 
+ impl PlacedFootprint {
++    /// A footprint at `offset` (tests).
++    #[cfg(test)]
++    pub(crate) fn new(offset: u64, format: u32, width: u32, height: u32, row_pitch: u32) -> Self {
++        Self { offset, format, width, height, depth: 1, row_pitch }
++    }
++
+     /// The bytes it spans in a buffer: every row pitched but the last.
+     pub(crate) fn bytes(&self) -> Option<u64> {
+         let (element, block) = element(self.format)?;
+diff --git a/crates/victory-shader/src/emit/rect.rs b/crates/victory-shader/src/emit/rect.rs
+index 1eb5f9a..9c328d0 100644
+--- a/crates/victory-shader/src/emit/rect.rs
++++ b/crates/victory-shader/src/emit/rect.rs
+@@ -1,12 +1,16 @@
+ //! The console's rectangle lists on the host. A rectangle comes as three
+-//! corners, the second between the other two, and the hardware adds the
+-//! fourth at `v0 + v2 - v1`, for the position and every attribute. The host
+-//! has no such primitive; a geometry shader made for the vertex shader that
+-//! feeds it takes each triangle `(v0, v1, v2)` and emits it with its
+-//! completion `(v0, v2, v3)`, both turning the same way. Integer outputs
+-//! (which can only be flat) keep `v0`'s value at the fourth corner.
++//! corners in any order, and the hardware adds the fourth across the
++//! diagonal from the corner between the other two, for the position and
++//! every attribute: `a + b - c`, `c` the corner facing the longest side.
++//! Shaders differ: a full-screen rectangle can come as top left, bottom
++//! left, bottom right (`c` second), a blit or tile as top left, bottom left,
++//! top right (`c` first, as Mesa's own blits give them). The host has no
++//! such primitive; a geometry shader made for the vertex shader that feeds
++//! it takes each triangle `(v0, v1, v2)` and emits it with its completion
++//! `(a, b, v3)`, both turning the same way. Integer outputs (which can only
++//! be flat) keep `v0`'s value at the fourth corner.
+ 
+-use super::bitcode::{Attr, Bin, Term};
++use super::bitcode::{Attr, Bin, Term, pred};
+ use super::shader::Shader;
+ use crate::ShaderError;
+ use crate::dxbc::{Container, FourCC};
+@@ -45,25 +49,79 @@ pub fn rectangle_gs(vs: &[u8]) -> Result<Vec<u8>, ShaderError> {
+         }
+         corners.push(values);
+     }
+-    let fourth: Vec<Vec<_>> = elements
++    // Which corner is between the other two: the one facing the longest
++    // side, in screen space. Without a position (or with ties, a degenerate
++    // rectangle) the second one.
++    let (first, third) = match elements
+         .iter()
+-        .enumerate()
+-        .map(|(id, e)| {
+-            (0..usize::from(e.cols))
+-                .map(|col| {
+-                    let [v0, v1, v2] = [0, 1, 2].map(|k| corners[k][id][col]);
+-                    if e.comp == 9 {
+-                        let sum = s.m.bin(b, Bin::Add, v0, v2);
+-                        s.m.bin(b, Bin::Sub, sum, v1)
++        .position(|e| e.kind == 3 && e.comp == 9 && e.cols >= 2)
++    {
++        Some(p) => {
++            let xy: Vec<_> = (0..3)
++                .map(|k| {
++                    let c = &corners[k][p];
++                    let (x, y) = (c[0], c[1]);
++                    if c.len() >= 4 {
++                        (
++                            s.m.bin(b, Bin::SDiv, x, c[3]),
++                            s.m.bin(b, Bin::SDiv, y, c[3]),
++                        )
+                     } else {
+-                        v0
++                        (x, y)
+                     }
+                 })
+-                .collect()
+-        })
+-        .collect();
+-    corners.push(fourth);
+-    for triangle in [[0, 1, 2], [0, 2, 3]] {
++                .collect();
++            let mut side = |i: usize, j: usize| {
++                let dx = s.m.bin(b, Bin::Sub, xy[i].0, xy[j].0);
++                let dy = s.m.bin(b, Bin::Sub, xy[i].1, xy[j].1);
++                let (xx, yy) = (s.m.bin(b, Bin::Mul, dx, dx), s.m.bin(b, Bin::Mul, dy, dy));
++                s.m.bin(b, Bin::Add, xx, yy)
++            };
++            let (d01, d02, d12) = (side(0, 1), side(0, 2), side(1, 2));
++            let mut longest = |d: _, e: _, f: _| {
++                let over_e = s.m.cmp(b, pred::OGT, d, e);
++                let over_f = s.m.cmp(b, pred::OGT, d, f);
++                s.m.bin(b, Bin::And, over_e, over_f)
++            };
++            (Some(longest(d12, d01, d02)), Some(longest(d01, d02, d12)))
++        }
++        None => (None, None),
++    };
++    // Corner k's value, picked by the corner between the others: the
++    // completion is `(a, b, a + b - c)`, `(v0, v2, ..)` when it is the
++    // second, `(v2, v1, ..)` when the first, `(v1, v0, ..)` when the third.
++    let pick = |m: &mut super::bitcode::Module, [if_first, if_second, if_third]: [_; 3]| {
++        let v = match third {
++            Some(t) => m.select(b, t, if_third, if_second),
++            None => if_second,
++        };
++        match first {
++            Some(f) => m.select(b, f, if_first, v),
++            None => v,
++        }
++    };
++    let mut completion: [Vec<Vec<_>>; 3] = Default::default();
++    for (id, e) in elements.iter().enumerate() {
++        let [mut a, mut bs, mut fourth] = [Vec::new(), Vec::new(), Vec::new()];
++        let columns = corners[0][id].iter().zip(&corners[1][id]).zip(&corners[2][id]);
++        for ((&v0, &v1), &v2) in columns.take(usize::from(e.cols)) {
++            let (va, vb) = (pick(&mut s.m, [v2, v0, v1]), pick(&mut s.m, [v1, v2, v0]));
++            a.push(va);
++            bs.push(vb);
++            fourth.push(if e.comp == 9 {
++                let c = pick(&mut s.m, [v0, v1, v2]);
++                let sum = s.m.bin(b, Bin::Add, va, vb);
++                s.m.bin(b, Bin::Sub, sum, c)
++            } else {
++                v0
++            });
++        }
++        completion[0].push(a);
++        completion[1].push(bs);
++        completion[2].push(fourth);
++    }
++    corners.extend(completion);
++    for triangle in [[0, 1, 2], [3, 4, 5]] {
+         for k in triangle {
+             for (id, e) in elements.iter().enumerate() {
+                 let suffix = if e.comp == 9 { ".f32" } else { ".i32" };
+@@ -155,6 +213,31 @@ mod tests {
+     /// attribute interpolated over it, the top-right half included.
+     #[test]
+     fn rectangles_get_their_fourth_corner() {
++        // The corner between the other two second.
++        draws_the_square(&[[-0.5, 0.5], [-0.5, -0.5], [0.5, -0.5]]);
++    }
++
++    /// Tiles and blits give the corners as top left, bottom left, top
++    /// right: the corner between the others first, its fourth the bottom
++    /// right. Completed across the wrong diagonal (`v0 + v2 - v1`), the
++    /// second triangle lands on the square above, and the bottom-right half
++    /// is never drawn.
++    #[test]
++    fn rectangles_with_the_corner_first_complete_across_their_diagonal() {
++        draws_the_square(&[[-0.5, 0.5], [-0.5, -0.5], [0.5, 0.5]]);
++    }
++
++    /// The corner between the others third (top right, bottom left, top
++    /// left): the fourth is the bottom right as well.
++    #[test]
++    fn rectangles_with_the_corner_third_complete_across_their_diagonal() {
++        draws_the_square(&[[0.5, 0.5], [-0.5, -0.5], [-0.5, 0.5]]);
++    }
++
++    /// Draws one rectangle of the given corners (clip x, y; the attribute
++    /// is the same x, y) into 32x32 and checks every pixel: the square
++    /// `|x|, |y| < 0.5` holds its coordinates, the rest nothing.
++    fn draws_the_square(corners: &[[f32; 2]; 3]) {
+         let (vs, ps) = (shader(false), shader(true));
+         let gs = super::rectangle_gs(&vs).unwrap();
+         if let Ok(mut v) =
+@@ -164,14 +247,13 @@ mod tests {
+                 v.validate(&mut c.clone()).unwrap();
+             }
+         }
+-        #[rustfmt::skip]
+-        let vertices = [
+-            -0.5, 0.5, 0.5, 1.0, -0.5, 0.5,
+-            -0.5, -0.5, 0.5, 1.0, -0.5, -0.5,
+-            0.5, -0.5, 0.5, 1.0, 0.5, -0.5,
+-        ];
++        let vertices: Vec<f32> = corners
++            .iter()
++            .flat_map(|&[x, y]| [x, y, 0.5, 1.0, x, y])
++            .collect();
+         for warp in [false, true] {
+             let Ok(host) = Host::new(warp) else { continue };
++            eprintln!("using host GPU for rectangle test, warp={warp}");
+             let root = host.root_signature_for(&[]).unwrap();
+             let pso = host.pipeline_gs(&root, &vs, &gs, &ps).unwrap();
+             let draw = Draw {

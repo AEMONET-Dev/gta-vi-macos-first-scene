@@ -1,0 +1,467 @@
+diff --git a/crates/victory-formats/Cargo.toml b/crates/victory-formats/Cargo.toml
+index 310a674f..169c09ac 100644
+--- a/crates/victory-formats/Cargo.toml
++++ b/crates/victory-formats/Cargo.toml
+@@ -17,3 +17,7 @@ workspace = true
+ [[bench]]
+ name = "table_runs"
+ harness = false
++
++[[bench]]
++name = "title_copies"
++harness = false
+diff --git a/crates/victory-formats/benches/title_copies.rs b/crates/victory-formats/benches/title_copies.rs
+new file mode 100644
+index 00000000..79af6a51
+--- /dev/null
++++ b/crates/victory-formats/benches/title_copies.rs
+@@ -0,0 +1,213 @@
++//! Time what a title copy walks of the copies a submission flushed:
++//! every copy, as `host`'s `title_copied` walks them today, and only
++//! the copies its bytes can be in, as the extent index walks them. The
++//! copies need no title files or GPU: what the walk costs is where they
++//! sit in memory and what each takes out.
++
++use std::collections::HashMap;
++use std::hint::black_box;
++use std::time::Instant;
++
++use victory_formats::extents::Extents;
++
++/// A world's copies, ~9,000 over 40 regions, every list asking for each.
++const COPIES: usize = 9_000;
++/// The regions copies sit in: 40 of 256 MiB, below 2^40.
++const REGIONS: u64 = 40;
++/// The title copies into buffers a submission runs between its lists.
++const TITLE_COPIES: usize = 80;
++/// Submissions a sample times.
++const BATCH: u32 = 8;
++
++/// A deterministic generator, so every run builds the same copies.
++struct Lcg(u64);
++
++impl Lcg {
++    fn next(&mut self) -> u64 {
++        self.0 = self
++            .0
++            .wrapping_mul(6364136223846793005)
++            .wrapping_add(1442695040888963407);
++        self.0 >> 33
++    }
++}
++
++/// Copies clustered as title memory, in `regions` distinct 256 MiB
++/// regions below 2^40: 8 streaming buffers (64–256 MiB), 200 heaps
++/// (1–16 MiB), 1,000 per-draw scratch areas (256 KiB–1 MiB), the rest
++/// ring buffers (64–128 KiB), until `count`.
++fn copies(count: usize, regions: u64, lcg: &mut Lcg) -> Vec<(u64, u64)> {
++    let mut copies = Vec::with_capacity(count);
++    let place = |lcg: &mut Lcg, len: u64| {
++        let region = lcg.next() % regions;
++        let pages = len.div_ceil(1 << 16);
++        let start = (region << 28) + ((lcg.next() % (4096 - pages.min(4096))) << 16);
++        (start, len)
++    };
++    for _ in 0..8 {
++        let len = ((lcg.next() % 192) + 64) << 20;
++        copies.push(place(lcg, len));
++    }
++    for _ in 0..200 {
++        let len = ((lcg.next() % 15) + 1) << 20;
++        copies.push(place(lcg, len));
++    }
++    for _ in 0..1_000 {
++        let len = ((lcg.next() % 768) + 256) << 10;
++        copies.push(place(lcg, len));
++    }
++    while copies.len() < count {
++        let len = ((lcg.next() % 64) + 64) << 10;
++        copies.push(place(lcg, len));
++    }
++    copies
++}
++
++/// The small copies a submission's title steps write into title memory:
++/// few to 64 KiB, wherever the title's buffers sit in it.
++fn windows(lcg: &mut Lcg) -> Vec<(usize, usize)> {
++    (0..TITLE_COPIES)
++        .map(|_| {
++            let at = (lcg.next() % (REGIONS << 28)) as usize;
++            let len = (((lcg.next() % 61) + 4) << 10) as usize;
++            (at, at + len)
++        })
++        .collect()
++}
++
++/// victory-gpu's `Ranges` (private there): byte ranges `[from, to)`, in
++/// order and apart, the same shape per entry. What a title copy does to
++/// each is `Ranges::remove`, so it is here with the same searches.
++#[derive(Clone, Default, Debug, PartialEq, Eq)]
++struct Ranges(Vec<(usize, usize)>);
++
++impl Ranges {
++    /// `[from, to)` alone, as a flush leaves a copy asked for whole.
++    fn whole(from: usize, to: usize) -> Self {
++        Self(vec![(from, to)])
++    }
++
++    /// Takes `[from, to)` out (a range around it falls in two): the two
++    /// searches and their nothing-found return are what a no-op costs.
++    fn remove(&mut self, from: usize, to: usize) {
++        if from >= to {
++            return;
++        }
++        let first = self.0.partition_point(|&(_, e)| e <= from);
++        let last = first + self.0[first..].partition_point(|&(s, _)| s < to);
++        if first == last {
++            return;
++        }
++        let (s, e) = (self.0[first].0, self.0[last - 1].1);
++        let left = (s < from).then_some((s, from));
++        let right = (to < e).then_some((to, e));
++        self.0.splice(first..last, left.into_iter().chain(right));
++    }
++}
++
++/// One submission's title copies, one way or the other: 9 samples of
++/// BATCH submissions, µs each.
++fn run(
++    scan: bool,
++    world: &[(u64, u64)],
++    current: &mut HashMap<usize, (usize, Ranges)>,
++    lcg: &mut Lcg,
++) -> Vec<f64> {
++    let mut samples = Vec::with_capacity(9);
++    let mut extents = Extents::default();
++    for _ in 0..9 {
++        let mut took = 0u128;
++        for _ in 0..BATCH {
++            // As a submission's flush leaves it, before the title steps:
++            // every copy current whole (the flush's own copies are not
++            // what is timed here, either way).
++            for (key, (_, have)) in current.iter_mut() {
++                let &(start, len) = &world[*key];
++                *have = Ranges::whole(start as usize, (start + len) as usize);
++            }
++            let windows = windows(lcg);
++            let started = Instant::now();
++            if scan {
++                // Today: every copy, whatever the bytes can be in.
++                for &(from, to) in &windows {
++                    for (_, have) in current.values_mut() {
++                        have.remove(from, to);
++                    }
++                }
++            } else {
++                // The fix's way: each copy's extent filed as its flush
++                // files it (charged to this way), a title copy then
++                // takes out of only the copies that can hold its bytes.
++                extents.clear();
++                for (key, &(start, len)) in world.iter().enumerate() {
++                    extents.flushed(key, start as usize, (start + len) as usize);
++                }
++                for &(from, to) in &windows {
++                    for key in extents.overlapping(from, to) {
++                        if let Some((_, have)) = current.get_mut(&key) {
++                            have.remove(from, to);
++                        }
++                    }
++                }
++            }
++            took += started.elapsed().as_micros();
++        }
++        samples.push(took as f64 / f64::from(BATCH));
++    }
++    samples
++}
++
++fn main() {
++    let mut lcg = Lcg(0x9E37_79B9_7F4A_7C15);
++    let world = copies(COPIES, REGIONS, &mut lcg);
++    println!(
++        "bench_title_copies_shape {} copies {} regions",
++        world.len(),
++        REGIONS
++    );
++
++    // As a world submission leaves `host`'s `current` after its lists
++    // asked for every copy whole: each copy's memory in one range.
++    let mut current: HashMap<usize, (usize, Ranges)> = HashMap::with_capacity(COPIES);
++    for (key, &(start, len)) in world.iter().enumerate() {
++        current.insert(key, (key, Ranges::whole(start as usize, (start + len) as usize)));
++    }
++
++    // One submission both ways on the same state, untimed: what they
++    // take out is the same, and the visits are what the index saves.
++    let mut scan_map = current.clone();
++    let mut index_map = current.clone();
++    let mut extents = Extents::default();
++    for (key, &(start, len)) in world.iter().enumerate() {
++        extents.flushed(key, start as usize, (start + len) as usize);
++    }
++    let checked = windows(&mut lcg);
++    let mut visits = 0usize;
++    for &(from, to) in &checked {
++        for (_, have) in scan_map.values_mut() {
++            have.remove(from, to);
++        }
++        for key in extents.overlapping(from, to) {
++            visits += 1;
++            if let Some((_, have)) = index_map.get_mut(&key) {
++                have.remove(from, to);
++            }
++        }
++    }
++    assert_eq!(scan_map, index_map, "the same taken out both ways");
++    println!("bench_title_copied_visits_scan {}", TITLE_COPIES * COPIES);
++    println!("bench_title_copied_visits_index {visits}");
++
++    for (name, scan) in [("scan", true), ("index", false)] {
++        let mut samples = run(scan, &world, &mut current, &mut lcg);
++        samples.sort_by(|a, b| a.total_cmp(b));
++        let median = samples[samples.len() / 2];
++        let all = samples
++            .iter()
++            .map(|s| format!("{s:.0}"))
++            .collect::<Vec<_>>()
++            .join(" ");
++        println!("bench_title_copied_{name}_us {median:.0} us (all: {all})");
++        black_box(&samples);
++    }
++}
+diff --git a/crates/victory-formats/src/extents.rs b/crates/victory-formats/src/extents.rs
+new file mode 100644
+index 00000000..66424cc7
+--- /dev/null
++++ b/crates/victory-formats/src/extents.rs
+@@ -0,0 +1,147 @@
++//! Where the copies a submission flushed sit in memory: a title copy
++//! that takes bytes out of what each copy holds (victory-gpu's `host`)
++//! reaches by its bytes only the copies that can hold them, not every
++//! copy flushed.
++
++/// The memory extents of copies, each named by the key its holder is
++/// filed under: sorted by start, with the largest end up to each entry
++/// beside it, a window `[from, to)` walks only the entries that can
++/// overlap it and skips the rest without a look.
++#[derive(Default)]
++pub struct Extents {
++    /// `(start, end, key)`, in start order once [`Extents::overlapping`]
++    /// has built it.
++    entries: Vec<(usize, usize, usize)>,
++    /// The largest end in `entries[..=i]`, aligned with it: past the
++    /// first entry that reaches a window's `from`, nothing before it
++    /// reaches either.
++    ends: Vec<usize>,
++    /// Whether `entries` is in start order and `ends` built.
++    built: bool,
++}
++
++impl Extents {
++    /// A copy that flushed, its memory `[start, end)` filed under `key`.
++    pub fn flushed(&mut self, key: usize, start: usize, end: usize) {
++        self.entries.push((start, end, key));
++        self.built = false;
++    }
++
++    /// Nothing is held any more: as the holders are cleared.
++    pub fn clear(&mut self) {
++        self.entries.clear();
++        self.ends.clear();
++        self.built = true;
++    }
++
++    /// The keys whose memory can overlap `[from, to)`, in no particular
++    /// order: the entries that start before `to`, walked back while any
++    /// of them can reach `from` (the largest end so far says whether)
++    /// and kept where the entry itself reaches it. The rest hold none of
++    /// the window's bytes, whatever is taken out of the ones named.
++    pub fn overlapping(&mut self, from: usize, to: usize) -> impl Iterator<Item = usize> + '_ {
++        if !self.built {
++            self.entries.sort_unstable();
++            self.ends.clear();
++            let mut max = 0;
++            for &(_, end, _) in &self.entries {
++                max = max.max(end);
++                self.ends.push(max);
++            }
++            self.built = true;
++        }
++        let Extents { entries, ends, .. } = &*self;
++        let last = entries.partition_point(|&(start, ..)| start < to);
++        let empty = from >= to;
++        (0..last)
++            .rev()
++            .take_while(move |&i| !empty && ends[i] > from)
++            .filter(move |&i| entries[i].1 > from)
++            .map(move |i| entries[i].2)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::Extents;
++
++    /// The keys a window reaches, in pushed order.
++    fn keys(extents: &mut Extents, from: usize, to: usize) -> Vec<usize> {
++        let mut out: Vec<_> = extents.overlapping(from, to).collect();
++        out.sort_unstable();
++        out
++    }
++
++    /// Only the copies whose memory a window's bytes can be in are
++    /// reached: two copies sharing memory are both named for a title
++    /// copy into it, the copies before and after are left alone.
++    #[test]
++    fn a_window_reaches_only_the_copies_its_bytes_can_be_in() {
++        let mut extents = Extents::default();
++        extents.flushed(1, 0x1_0000, 0x2_0000);
++        // Shares 0x1_8000..0x2_0000 with 1.
++        extents.flushed(2, 0x1_8000, 0x3_0000);
++        extents.flushed(3, 0x5_0000, 0x6_0000);
++        extents.flushed(4, 0, 0x100);
++        assert_eq!(keys(&mut extents, 0x1_9000, 0x1_a000), vec![1, 2]);
++        assert_eq!(keys(&mut extents, 0x2_8000, 0x2_9000), vec![2]);
++        assert_eq!(keys(&mut extents, 0x4_0000, 0x4_1000), Vec::<usize>::new());
++        assert_eq!(keys(&mut extents, 0x5_8000, 0x6_0000), vec![3]);
++        assert_eq!(keys(&mut extents, 0x6_0000, 0x7_0000), Vec::<usize>::new());
++        assert_eq!(keys(&mut extents, 0, 0x100), vec![4]);
++        assert_eq!(keys(&mut extents, 0x40, 0x40), Vec::<usize>::new());
++        assert_eq!(keys(&mut extents, 0x2_0000, 0), Vec::<usize>::new());
++    }
++
++    /// Pushed after a lookup and cleared, the extents answer from what
++    /// they hold then (`host` flushes between title copies and clears
++    /// with its holders).
++    #[test]
++    fn pushed_after_a_lookup_and_cleared() {
++        let mut extents = Extents::default();
++        extents.flushed(7, 0x100, 0x200);
++        assert_eq!(keys(&mut extents, 0x180, 0x1c0), vec![7]);
++        extents.clear();
++        assert_eq!(keys(&mut extents, 0x180, 0x1c0), Vec::<usize>::new());
++        extents.flushed(8, 0x300, 0x400);
++        extents.flushed(9, 0x180, 0x280);
++        assert_eq!(keys(&mut extents, 0x190, 0x1a0), vec![9]);
++        assert_eq!(keys(&mut extents, 0x380, 0x3c0), vec![8]);
++    }
++
++    /// Every window of a pile of copies reaches the same keys a walk of
++    /// all of them would (what `host`'s title copies keep is decided
++    /// entry by entry, so this is the fix's equivalence, in the small).
++    #[test]
++    fn every_window_reaches_what_a_walk_of_all_would() {
++        let mut state = 0x9E37_79B9_7F4A_7C15u64;
++        let mut next = move || {
++            state = state
++                .wrapping_mul(6364136223846793005)
++                .wrapping_add(1442695040888963407);
++            state >> 33
++        };
++        let mut extents = Extents::default();
++        let mut all = Vec::new();
++        for key in 0..500usize {
++            // Small extents in a small span, so they crowd and overlap.
++            let start = (next() % 0x100_0000) as usize;
++            let end = start + (next() % 0x10_0000) as usize + 1;
++            all.push((start, end, key));
++            extents.flushed(key, start, end);
++        }
++        for _ in 0..500 {
++            let from = (next() % 0x110_0000) as usize;
++            let to = from + (next() % 0x8_0000) as usize + 1;
++            let mut reached: Vec<_> = extents.overlapping(from, to).collect();
++            reached.sort_unstable();
++            let mut walked: Vec<_> = all
++                .iter()
++                .filter(|&&(start, end, _)| start < to && end > from)
++                .map(|&(_, _, key)| key)
++                .collect();
++            walked.sort_unstable();
++            assert_eq!(reached, walked, "the window {from:#x}..{to:#x}");
++        }
++    }
++}
+diff --git a/crates/victory-formats/src/lib.rs b/crates/victory-formats/src/lib.rs
+index be617296..1ad77f81 100644
+--- a/crates/victory-formats/src/lib.rs
++++ b/crates/victory-formats/src/lib.rs
+@@ -3,10 +3,13 @@
+ //! Each module is pure (bytes in, bytes out, no I/O): [`texture`] (the
+ //! GPU's tiled texture layouts and copies to and from linear rows),
+ //! [`pagetable`] (the title-memory page table the GPU's shaders look
+-//! addresses up in). Planned: BCPack textures, audio codecs (XMA2,
+-//! Opus), and the zlib streams used by hardware decompression.
++//! addresses up in), [`extents`] (where the copies a submission flushed
++//! sit in memory, so a byte window reaches only the copies that can
++//! hold it). Planned: BCPack textures, audio codecs (XMA2, Opus), and
++//! the zlib streams used by hardware decompression.
+ 
+ pub mod bcpack;
++pub mod extents;
+ pub mod pagetable;
+ pub mod texture;
+ pub mod xma;
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index 1a7d520a..64ab4e1d 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -2561,6 +2561,10 @@ struct Batch {
+     /// bounded diagnostics line. No range contents or view attribution.
+     #[cfg(feature = "diagnostics")]
+     summary: crate::ranges::RefreshSummary,
++    /// Where each copy in `current` sits in memory, by copy: a title copy
++    /// reaches by its bytes only the copies that can hold them, not
++    /// every copy flushed.
++    extents: victory_formats::extents::Extents,
+ }
+ 
+ /// How far apart a copy's pending ranges may be and still be done as one,
+@@ -2601,6 +2605,7 @@ impl Batch {
+     fn title_written(&mut self) {
+         self.flush();
+         self.current.clear();
++        self.extents.clear();
+     }
+ 
+     /// As [`Batch::title_written`], before a copy into the title memory
+@@ -2618,8 +2623,13 @@ impl Batch {
+         }
+         self.flush();
+         let (from, to) = touched(at, at.saturating_add(len));
+-        for (_, have) in self.current.values_mut() {
+-            have.remove(from, to);
++        // Only the copies whose memory the bytes can be in: the rest
++        // hold nothing of the window, and what a no-op remove would
++        // leave whole it leaves whole.
++        for key in self.extents.overlapping(from, to) {
++            if let Some((_, have)) = self.current.get_mut(&key) {
++                have.remove(from, to);
++            }
+         }
+     }
+ 
+@@ -2646,11 +2656,18 @@ impl Batch {
+                 PREPARING[1].fetch_add(copied as u64, Ordering::Relaxed);
+                 total += copied;
+                 let (from, to) = taken(from, to, (start as usize, (start + len) as usize));
+-                self.current
+-                    .entry(key)
+-                    .or_insert_with(|| (shadow.clone(), Default::default()))
+-                    .1
+-                    .insert(from, to, 0);
++                // The copy's memory joins the index as its first range
++                // joins `current`: a later title copy reaches it by its
++                // bytes.
++                let (_, have) = match self.current.entry(key) {
++                    std::collections::hash_map::Entry::Vacant(vacant) => {
++                        self.extents
++                            .flushed(key, start as usize, (start + len) as usize);
++                        vacant.insert((shadow.clone(), Default::default()))
++                    }
++                    std::collections::hash_map::Entry::Occupied(occupied) => occupied.into_mut(),
++                };
++                have.insert(from, to, 0);
+             }
+         }
+         total

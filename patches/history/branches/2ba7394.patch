@@ -1,0 +1,475 @@
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index 759756d..b8528a7 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -5,6 +5,7 @@
+ //! overlap them with per-submission fences once more than clears run.
+ 
+ mod refresh;
++pub(crate) mod refresh_timing;
+ mod sparse;
+ pub(crate) mod upload_jobs;
+ 
+@@ -2078,13 +2079,23 @@ impl Batch {
+             limit.min(self.uploads.len()).min((bytes / (8 << 20)).max(1))
+         };
+         let started = Instant::now();
++        // Opt-in (`VICTORY_REFRESH_TIMING=1`): what the worker this batch
++        // waits for spent its time on.
++        let timing = refresh_timing::batch();
++        let timing_ref = timing.as_ref();
+         let job = |(shadow, from, to): &(std::sync::Arc<crate::shadow::Shadow>, usize, usize)| {
+-            #[cfg(feature = "diagnostics")]
+-            let start = Instant::now();
+-            let count = shadow.update(*from, to - from);
+-            #[cfg(feature = "diagnostics")]
+-            crate::copystat::range(*from, to - from, start.elapsed().as_micros() as u64, 0);
+-            count
++            let run = || {
++                #[cfg(feature = "diagnostics")]
++                let start = Instant::now();
++                let count = shadow.update(*from, to - from);
++                #[cfg(feature = "diagnostics")]
++                crate::copystat::range(*from, to - from, start.elapsed().as_micros() as u64, 0);
++                count
++            };
++            match timing_ref {
++                Some(t) => t.job(run),
++                None => run(),
++            }
+         };
+         // Experiment (`VICTORY_TRACK_ONLY_LEN`): the one guard-tracked copy
+         // changes page protection, so its uploads run in order on one
+@@ -2099,6 +2110,9 @@ impl Batch {
+         } else {
+             upload_jobs::run(&self.uploads, workers, job)
+         };
++        if let Some(t) = timing {
++            t.finish(workers, bytes);
++        }
+         PREPARING[0].fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
+         PREPARING[1].fetch_add(copied as u64, Ordering::Relaxed);
+         // Do not retain a separate strong reference after the title changes
+@@ -2146,7 +2160,9 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
+ fn first_read(src: *const u8, dst: *mut u8, len: usize) -> bool {
+     #[cfg(feature = "diagnostics")]
+     let moved = std::time::Instant::now();
++    let probe = refresh_timing::start();
+     let whole = read(src, dst, len);
++    probe.done(if whole { refresh_timing::Kind::FirstOk } else { refresh_timing::Kind::FirstFailed }, len);
+     #[cfg(feature = "diagnostics")]
+     crate::copystat::add(crate::copystat::C::MoveUs, moved.elapsed().as_micros() as u64);
+     whole
+@@ -2185,15 +2201,26 @@ fn copy_regions(
+         if !readable {
+             hole(at, next);
+             zero_unreadable(to, next - at, title_dst);
+-        } else if !read(at as *const u8, to, next - at) {
++        } else if !{
++            let probe = refresh_timing::start();
++            let ok = read(at as *const u8, to, next - at);
++            probe.done(refresh_timing::Kind::Retry, next - at);
++            ok
++        } {
+             // A mapping changed, or the query failed. Salvage readable
+             // pieces without trusting the protection returned by the query.
++            let timed_read = |from: usize, out: *mut u8, n: usize| {
++                let probe = refresh_timing::start();
++                let ok = read(from as *const u8, out, n);
++                probe.done(refresh_timing::Kind::Retry, n);
++                ok
++            };
+             for_pieces(at, next - at, 64 << 10, |chunk, size| {
+                 let out = dst.wrapping_add(chunk - start);
+-                if !read(chunk as *const u8, out, size) {
++                if !timed_read(chunk, out, size) {
+                     for_pieces(chunk, size, 4 << 10, |page, count| {
+                         let out = dst.wrapping_add(page - start);
+-                        if !read(page as *const u8, out, count) {
++                        if !timed_read(page, out, count) {
+                             zero_unreadable(out, count, title_dst);
+                         }
+                     });
+@@ -2213,7 +2240,10 @@ fn source_region(at: usize, end: usize) -> (usize, bool) {
+     let page_end = (at | 0xfff).saturating_add(1).min(end);
+     // SAFETY: a valid out pointer of the right size, filled by VirtualQuery.
+     let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+-    if unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) } == 0 {
++    let probe = refresh_timing::start();
++    let queried = unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) };
++    probe.done(refresh_timing::Kind::Query, 0);
++    if queried == 0 {
+         return (page_end, true);
+     }
+     let limit = (info.BaseAddress as usize).saturating_add(info.RegionSize);
+@@ -2231,6 +2261,12 @@ fn source_region(at: usize, end: usize) -> (usize, bool) {
+ fn zero_unreadable(dst: *mut u8, len: usize, title_dst: bool) {
+     #[cfg(feature = "diagnostics")]
+     crate::copystat::add(crate::copystat::C::Unmapped, len as u64);
++    let probe = refresh_timing::start();
++    zero_unreadable_untimed(dst, len, title_dst);
++    probe.done(refresh_timing::Kind::Zero, len);
++}
++
++fn zero_unreadable_untimed(dst: *mut u8, len: usize, title_dst: bool) {
+     if title_dst {
+         static ZEROS: [u8; 64 << 10] = [0; 64 << 10];
+         let mut offset = 0;
+diff --git a/crates/victory-gpu/src/host/refresh_timing.rs b/crates/victory-gpu/src/host/refresh_timing.rs
+new file mode 100644
+index 0000000..a8dcf70
+--- /dev/null
++++ b/crates/victory-gpu/src/host/refresh_timing.rs
+@@ -0,0 +1,339 @@
++//! Opt-in timing of buffer-refresh batches (`VICTORY_REFRESH_TIMING=1`).
++//!
++//! A refresh batch runs on the submitting thread and its workers, and the
++//! submission waits for all of them, so a batch's wall time is time the
++//! frame waits. This splits that time on the worker that finished last (the
++//! one the batch actually waited for) into what the copy path spent it on:
++//!
++//! * `first`: the optimistic whole-span `ReadProcessMemory`, split into
++//!   reads that succeeded and reads that failed on an unmapped page (Wine
++//!   copies the bytes before the hole and then reports failure, so the
++//!   failed time is wasted work);
++//! * `query`: `VirtualQuery` calls finding the readable regions;
++//! * `retry`: the per-region re-reads and their 64 KiB / 4 KiB salvage;
++//! * `zero`: zero-filling unreadable regions in the host copy;
++//! * `other`: the rest of the jobs (planning, tracking, snapshots).
++//!
++//! One `refresh batch timing` line per batch; the first timestamp in the
++//! line is when the batch ended, its wall time is `wall_us`. Off, each probe
++//! costs one relaxed load.
++
++use std::cell::Cell;
++use std::sync::Mutex;
++use std::sync::atomic::{AtomicU8, Ordering};
++use std::time::Instant;
++
++/// What a probe timed.
++#[derive(Clone, Copy)]
++pub(crate) enum Kind {
++    FirstOk = 0,
++    FirstFailed = 1,
++    Query = 2,
++    Retry = 3,
++    Zero = 4,
++}
++
++const KINDS: usize = 5;
++const NAMES: [&str; KINDS] = ["first_ok", "first_failed", "query", "retry", "zero"];
++
++/// Per-thread running totals: microseconds, calls and bytes per kind.
++#[derive(Clone, Copy, Default)]
++pub(crate) struct Totals {
++    us: [u64; KINDS],
++    calls: [u64; KINDS],
++    bytes: [u64; KINDS],
++    /// Holes a copy could not remember because its list was full (they
++    /// are walked with `VirtualQuery` again on every later copy).
++    capped: u64,
++}
++
++impl Totals {
++    fn minus(&self, o: &Totals) -> Totals {
++        let mut d = Totals::default();
++        for k in 0..KINDS {
++            d.us[k] = self.us[k] - o.us[k];
++            d.calls[k] = self.calls[k] - o.calls[k];
++            d.bytes[k] = self.bytes[k] - o.bytes[k];
++        }
++        d.capped = self.capped - o.capped;
++        d
++    }
++    fn add(&mut self, o: &Totals) {
++        for k in 0..KINDS {
++            self.us[k] += o.us[k];
++            self.calls[k] += o.calls[k];
++            self.bytes[k] += o.bytes[k];
++        }
++        self.capped += o.capped;
++    }
++    fn timed_us(&self) -> u64 {
++        self.us.iter().sum()
++    }
++    fn describe(&self) -> String {
++        let mut s = String::new();
++        for k in 0..KINDS {
++            s.push_str(&format!(
++                "{}={}us/{}x/{}MB ",
++                NAMES[k],
++                self.us[k],
++                self.calls[k],
++                self.bytes[k] / 1_000_000
++            ));
++        }
++        s.push_str(&format!("capped={}", self.capped));
++        s
++    }
++}
++
++thread_local! {
++    static TOTALS: Cell<Totals> = Cell::new(Totals::default());
++}
++
++static STATE: AtomicU8 = AtomicU8::new(0);
++
++/// Whether timing is on (`VICTORY_REFRESH_TIMING=1`), read once.
++pub(crate) fn on() -> bool {
++    match STATE.load(Ordering::Relaxed) {
++        1 => false,
++        2 => true,
++        _ => {
++            let on = crate::switch::on("VICTORY_REFRESH_TIMING");
++            STATE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
++            on
++        }
++    }
++}
++
++/// Tests: turn timing on or off regardless of the environment.
++#[cfg(test)]
++pub(crate) fn force(on: bool) {
++    STATE.store(if on { 2 } else { 1 }, Ordering::Relaxed);
++}
++
++/// A started probe; `done` adds its time to this thread's totals.
++pub(crate) struct Probe(Option<Instant>);
++
++pub(crate) fn start() -> Probe {
++    Probe(on().then(Instant::now))
++}
++
++impl Probe {
++    pub(crate) fn done(self, kind: Kind, bytes: usize) {
++        if let Some(t) = self.0 {
++            let us = t.elapsed().as_micros() as u64;
++            TOTALS.with(|c| {
++                let mut v = c.get();
++                v.us[kind as usize] += us;
++                v.calls[kind as usize] += 1;
++                v.bytes[kind as usize] += bytes as u64;
++                c.set(v);
++            });
++        }
++    }
++}
++
++/// A copy's hole list reached its cap.
++pub(crate) fn capped() {
++    if on() {
++        TOTALS.with(|c| {
++            let mut v = c.get();
++            v.capped += 1;
++            c.set(v);
++        });
++    }
++}
++
++fn snapshot() -> Totals {
++    TOTALS.with(Cell::get)
++}
++
++/// One job of a batch: which thread ran it, when it ended (µs after the
++/// batch began), and what its probes saw.
++struct Job {
++    thread: std::thread::ThreadId,
++    end_us: u64,
++    busy_us: u64,
++    totals: Totals,
++}
++
++/// The jobs of one batch being timed.
++pub(crate) struct Batch {
++    began: Instant,
++    jobs: Mutex<Vec<Job>>,
++}
++
++/// What [`Batch::finish`] found (read back by tests; logged otherwise).
++#[derive(Clone, Copy)]
++#[cfg_attr(not(test), allow(dead_code))]
++pub(crate) struct Summary {
++    pub(crate) wall_us: u64,
++    pub(crate) workers: usize,
++    pub(crate) jobs: usize,
++    pub(crate) critical: Totals,
++    pub(crate) critical_busy_us: u64,
++    pub(crate) all: Totals,
++}
++
++#[cfg(test)]
++impl Summary {
++    pub(crate) fn critical_us(&self, kind: Kind) -> u64 {
++        self.critical.us[kind as usize]
++    }
++    pub(crate) fn all_calls(&self, kind: Kind) -> u64 {
++        self.all.calls[kind as usize]
++    }
++    pub(crate) fn all_bytes(&self, kind: Kind) -> u64 {
++        self.all.bytes[kind as usize]
++    }
++}
++
++pub(crate) fn batch() -> Option<Batch> {
++    on().then(|| Batch {
++        began: Instant::now(),
++        jobs: Mutex::default(),
++    })
++}
++
++impl Batch {
++    /// Runs one job of the batch, timing it.
++    pub(crate) fn job<R>(&self, f: impl FnOnce() -> R) -> R {
++        let before = snapshot();
++        let started = Instant::now();
++        let r = f();
++        let busy_us = started.elapsed().as_micros() as u64;
++        let job = Job {
++            thread: std::thread::current().id(),
++            end_us: self.began.elapsed().as_micros() as u64,
++            busy_us,
++            totals: snapshot().minus(&before),
++        };
++        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).push(job);
++        r
++    }
++
++    /// Logs the batch: the totals of the worker that finished last (the
++    /// one the submission waited for) and of all workers.
++    pub(crate) fn finish(self, workers: usize, bytes: usize) -> Summary {
++        let wall_us = self.began.elapsed().as_micros() as u64;
++        let jobs = self.jobs.into_inner().unwrap_or_else(|e| e.into_inner());
++        let last = jobs.iter().max_by_key(|j| j.end_us).map(|j| j.thread);
++        let (mut critical, mut all) = (Totals::default(), Totals::default());
++        let mut critical_busy_us = 0;
++        let mut threads = std::collections::HashSet::new();
++        for j in &jobs {
++            all.add(&j.totals);
++            threads.insert(j.thread);
++            if Some(j.thread) == last {
++                critical.add(&j.totals);
++                critical_busy_us += j.busy_us;
++            }
++        }
++        let summary = Summary {
++            wall_us,
++            workers: threads.len(),
++            jobs: jobs.len(),
++            critical,
++            critical_busy_us,
++            all,
++        };
++        tracing::info!(
++            target: "victory_gpu::refresh_timing",
++            "refresh batch timing wall_us={wall_us} workers={} planned_workers={workers} jobs={} bytes={bytes} \
++             critical_busy_us={critical_busy_us} critical_timed_us={} | critical: {} | all: {}",
++            summary.workers,
++            summary.jobs,
++            critical.timed_us(),
++            critical.describe(),
++            all.describe(),
++        );
++        summary
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::{Kind, batch, force};
++    use windows_sys::Win32::System::Memory::{
++        MEM_COMMIT, MEM_DECOMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
++    };
++
++    /// A batch of 4-worker copies over title memory with unmapped 64 KiB
++    /// blocks: the copies stay exact, and the timing splits the work into
++    /// failed first reads, region queries, retries and zero-fill, with the
++    /// critical worker's timed parts inside the batch's wall time. A second
++    /// batch over the same spans uses the remembered holes: no failed first
++    /// read of a whole span, the same zero-fill.
++    #[test]
++    fn timing_splits_a_batch_over_holes() {
++        const B: usize = 64 << 10;
++        const SPAN: usize = 16 * B;
++        const SPANS: usize = 8;
++        force(true);
++        // SAFETY: our own memory, released at the end.
++        unsafe {
++            let src = VirtualAlloc(std::ptr::null(), SPANS * SPAN, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE).cast::<u8>();
++            assert!(!src.is_null());
++            for i in 0..SPANS * SPAN {
++                src.add(i).write((i / 4096) as u8 | 1);
++            }
++            let mut expected: Vec<u8> = (0..SPANS * SPAN).map(|i| (i / 4096) as u8 | 1).collect();
++            // Two holes in every span: one in the middle, one at the end.
++            let mut hole_bytes = 0;
++            for s in 0..SPANS {
++                for b in [5, 15] {
++                    let at = s * SPAN + b * B;
++                    assert_ne!(VirtualFree(src.add(at).cast(), B, MEM_DECOMMIT), 0);
++                    expected[at..at + B].fill(0);
++                    hole_bytes += B;
++                }
++            }
++            let mut dst = vec![0xeeu8; SPANS * SPAN];
++            let out = dst.as_mut_ptr() as usize;
++            let base = src as usize;
++            let jobs: Vec<usize> = (0..SPANS).collect();
++            let mut summaries = Vec::new();
++            // One worker twice (hole hints are per thread), then four.
++            for workers in [1, 1, 4] {
++                let timing = batch().expect("timing is on");
++                crate::host::upload_jobs::run(&jobs, workers, |&s| {
++                    timing.job(|| {
++                        crate::host::copy_mapped((out + s * SPAN) as *mut u8, (base + s * SPAN) as *const u8, SPAN, false);
++                        SPAN
++                    })
++                });
++                summaries.push(timing.finish(4, SPANS * SPAN));
++                assert!(dst == expected, "copy matches title memory, zeros at the holes");
++                dst.fill(0xee);
++            }
++            let (first, second, parallel) = (summaries[0], summaries[1], summaries[2]);
++            for s in [&first, &second, &parallel] {
++                assert_eq!(s.jobs, SPANS);
++                assert!((1..=4).contains(&s.workers));
++                assert_eq!(s.all_bytes(Kind::Zero) as usize, hole_bytes, "each hole zero-filled once");
++                assert!(s.all_calls(Kind::Query) > 0, "holes are found by region queries");
++                let timed: u64 = [Kind::FirstOk, Kind::FirstFailed, Kind::Query, Kind::Retry, Kind::Zero]
++                    .iter()
++                    .map(|&k| s.critical_us(k))
++                    .sum();
++                assert!(timed <= s.critical_busy_us + 1, "timed parts lie inside the critical worker's jobs");
++                assert!(s.critical_busy_us <= s.wall_us + 1, "the critical worker lies inside the batch");
++            }
++            assert_eq!(first.all_calls(Kind::FirstFailed) as usize, SPANS, "each span's first whole read fails once");
++            assert_eq!(second.all_calls(Kind::FirstFailed), 0, "remembered holes avoid the failing whole read");
++            assert!(second.all_calls(Kind::FirstOk) > 0, "readable runs between remembered holes read directly");
++            assert!(parallel.critical_busy_us <= parallel.wall_us + 1);
++            println!(
++                "first pass: wall {} us, failed first reads {} ({} MB), queries {}; second: wall {} us, queries {}",
++                first.wall_us,
++                first.all_calls(Kind::FirstFailed),
++                first.all_bytes(Kind::FirstFailed) / 1_000_000,
++                first.all_calls(Kind::Query),
++                second.wall_us,
++                second.all_calls(Kind::Query)
++            );
++            assert_ne!(VirtualFree(src.cast(), 0, MEM_RELEASE), 0);
++        }
++        force(false);
++        assert!(batch().is_none(), "off: no batch timing");
++    }
++}
+diff --git a/crates/victory-gpu/src/host/sparse.rs b/crates/victory-gpu/src/host/sparse.rs
+index b2ab0d8..45ea0b7 100644
+--- a/crates/victory-gpu/src/host/sparse.rs
++++ b/crates/victory-gpu/src/host/sparse.rs
+@@ -52,6 +52,8 @@ pub(super) fn copy(dst: *mut u8, src: *const u8, len: usize) {
+                 *last = hi;
+             } else if scratch.len() < MAX_HOLES {
+                 scratch.push((lo, hi));
++            } else if scratch.len() == MAX_HOLES {
++                super::refresh_timing::capped();
+             }
+         };
+         let mut walk = |lo: usize, hi: usize, query_first: bool| {

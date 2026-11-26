@@ -1,0 +1,31 @@
+{
+  "all_checked_uploads": 861,
+  "window_frames": 22,
+  "window_checked_uploads": 473,
+  "window_logical_bytes": 86299901952,
+  "window_written_bytes": 135536640,
+  "no_changes": 307,
+  "full_changes": 0,
+  "unchanged_percent": 99.84294693628344,
+  "window_cost_per_frame_ms": {
+    "read_us": 138.2941818181818,
+    "apply_us": 158.68277272727272
+  },
+  "sources_meter_windows": {
+    "1": [
+      23,
+      4196401152,
+      23
+    ],
+    "1868": [
+      1832,
+      181872295776,
+      879
+    ],
+    "849": [
+      6,
+      1034027680,
+      0
+    ]
+  }
+}

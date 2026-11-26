@@ -1,0 +1,58 @@
+{
+  "hardware": "Apple M5 Max",
+  "mullion_tested_release": "v0.5-alpha.4",
+  "mullion_release_commit": "292cde67c302aff13d25de9dba88b7252643d428",
+  "capture_layout": [
+    "0 3 182452224 2",
+    "0 165675008 28311552",
+    "28311552 0 154140672"
+  ],
+  "byte_source": "deterministic synthetic bytes, data held stable through fence",
+  "mullion": {
+    "rounds": 10,
+    "matched_readbacks": 20,
+    "resource_bytes": 182452224,
+    "steady_wall_ms_median": {
+      "stage": 5.711,
+      "import": 1.626
+    },
+    "paired_wall_ms": {
+      "stage": {
+        "0": 45.844,
+        "1": 5.695,
+        "2": 7.303,
+        "3": 5.713,
+        "4": 5.638,
+        "5": 5.622,
+        "6": 5.775,
+        "7": 5.801,
+        "8": 5.592,
+        "9": 5.711
+      },
+      "import": {
+        "0": 1.787,
+        "1": 1.722,
+        "2": 1.609,
+        "3": 1.621,
+        "4": 1.623,
+        "5": 1.665,
+        "6": 1.659,
+        "7": 2.159,
+        "8": 1.587,
+        "9": 1.626
+      }
+    },
+    "one_time_import_ms": 1.551
+  },
+  "xenia": {
+    "test_scope": "unmodified Initialize and UploadRanges in a host harness with real Metal",
+    "resource_bytes": 182452224,
+    "synthetic_page_lists": 8,
+    "equal_readbacks_per_mode": 8,
+    "delayed_cpu_change_bytes": 1,
+    "old_version_wrong_bytes": {
+      "direct_alias": 1,
+      "copy": 0
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "native-audit": {
+    "samples": 6,
+    "matched_earlier": 4,
+    "different_words": [
+      160052,
+      0,
+      142586,
+      0,
+      0,
+      0
+    ],
+    "gpu_ms": {
+      "min": 0.708333,
+      "median": 0.991854,
+      "max": 1.057625
+    }
+  },
+  "frozen-audit": {
+    "samples": 5,
+    "matched_earlier": 4,
+    "different_words": [
+      132800,
+      0,
+      0,
+      0,
+      0
+    ],
+    "gpu_ms": {
+      "min": 0.727,
+      "median": 0.9075,
+      "max": 1.100833
+    },
+    "freeze_ms": {
+      "min": 6.972042,
+      "median": 7.2385,
+      "max": 11.943333
+    },
+    "frozen_gpu_ms": {
+      "min": 0.684625,
+      "median": 0.940875,
+      "max": 1.018583
+    },
+    "oracle_copy_ms": {
+      "min": 20.0695,
+      "median": 22.574709,
+      "max": 27.853833
+    },
+    "fixed_matches": 5,
+    "negative_hits": 5,
+    "live_changes": [
+      188029,
+      0,
+      0,
+      0,
+      0
+    ]
+  }
+}

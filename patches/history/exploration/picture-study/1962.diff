@@ -1,0 +1,670 @@
+diff --git a/crates/victory-gpu/src/descriptor.rs b/crates/victory-gpu/src/descriptor.rs
+index 22ea4a7efb..d9ea0d509a 100644
+--- a/crates/victory-gpu/src/descriptor.rs
++++ b/crates/victory-gpu/src/descriptor.rs
+@@ -189,6 +189,95 @@ pub(crate) fn sync_heaps() {
+     }
+ }
+ 
++/// Per list: the heap-usage bitmap shaders that take views from the view
++/// heap `heap` mark the slots they read in (`victory_shader::emit`,
++/// `HostShader::heap_usage`), as its host GPU address. After the list ran,
++/// each marked slot whose view the host left null (a placed texture, see
++/// `host::HostHeap::mirror`) is made, so it reads from the next list on;
++/// the bitmap is cleared. With `VICTORY_HEAP_USAGE=0` (or no such heap) the
++/// marks are ignored.
++#[cfg(windows)]
++pub(crate) fn usage_bitmap(list: &crate::host::HostList, heap: usize) -> Option<u64> {
++    let words = (victory_shader::emit::HEAP_VIEWS / 32) as usize;
++    let (bitmap, data) = crate::host::host()?.shared_buffer((words as u64 * 4).next_multiple_of(256))?;
++    crate::host::name(&bitmap, || "heap slots read".into());
++    // SAFETY: our mapped buffer of at least `words` dwords.
++    unsafe { std::ptr::write_bytes(data.cast::<u32>(), 0, words) };
++    // SAFETY: a live buffer.
++    let gpu = unsafe { bitmap.GetGPUVirtualAddress() };
++    list.keep(&bitmap);
++    let data = data as usize;
++    list.defer_after(move || {
++        // SAFETY: the bitmap is mapped and the list's run is over.
++        let marks = unsafe { std::slice::from_raw_parts_mut(data as *mut u32, words) };
++        let on = heap_usage_on() && heap != 0;
++        if heap == 0 {
++            USAGE.2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        }
++        let mut used = Vec::new();
++        for (w, mark) in marks.iter_mut().enumerate() {
++            if *mark == 0 {
++                continue;
++            }
++            let mut bits = std::mem::take(mark);
++            while on && bits != 0 {
++                used.push((w * 32) as u32 + bits.trailing_zeros());
++                bits &= bits - 1;
++            }
++        }
++        if used.is_empty() {
++            return;
++        }
++        let made = make_used(heap, &used);
++        USAGE.0.fetch_add(used.len() as u64, std::sync::atomic::Ordering::Relaxed);
++        USAGE.1.fetch_add(made, std::sync::atomic::Ordering::Relaxed);
++    });
++    Some(gpu)
++}
++
++/// Heap slots marked read, and views made for them, since the last call.
++#[cfg(windows)]
++pub(crate) fn take_usage() -> (u64, u64) {
++    use std::sync::atomic::Ordering::Relaxed;
++    (USAGE.0.swap(0, Relaxed), USAGE.1.swap(0, Relaxed))
++}
++#[cfg(windows)]
++pub(crate) static USAGE: (std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64) =
++    (std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0));
++
++#[cfg(windows)]
++fn heap_usage_on() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var("VICTORY_HEAP_USAGE").map_or(true, |v| v != "0"))
++}
++
++/// Makes the views of slots `used` of the title view heap `heap` that the
++/// host left null for later (placed textures); how many it made.
++#[cfg(windows)]
++fn make_used(heap: usize, used: &[u32]) -> u64 {
++    // Held throughout: a heap is not dropped while its slots are made.
++    let heaps = SHADER_HEAPS.lock().unwrap_or_else(|e| e.into_inner());
++    if !heaps.iter().any(|&(_, _, h)| h == heap) {
++        USAGE.2.fetch_add(1000, std::sync::atomic::Ordering::Relaxed);
++        return 0;
++    }
++    // SAFETY: registered heaps are live (removed when dropped).
++    let h = unsafe { &*(heap as *const Heap) };
++    let (Some(Some(host)), Some(step)) = (h.host.get(), increment(h.desc.kind)) else {
++        USAGE.2.fetch_add(1_000_000, std::sync::atomic::Ordering::Relaxed);
++        return 0;
++    };
++    let step = u64::from(step);
++    let mut made = 0;
++    for &index in used {
++        if host.make_placed(index, h.start + u64::from(index) * step) {
++            made += 1;
++        }
++    }
++    drop(heaps);
++    made
++}
++
+ /// Gives back dynamic slots of the host heap behind the title heap at
+ /// `heap`, if that heap still exists.
+ #[cfg(windows)]
+diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
+index 93e29b64ae..0166e9a7c3 100644
+--- a/crates/victory-gpu/src/descriptor/host.rs
++++ b/crates/victory-gpu/src/descriptor/host.rs
+@@ -584,6 +584,37 @@ impl HostHeap {
+     /// if it changed since, and returns the view recorded there. Buffer
+     /// views are made only for draws (`for_draw`), which also copy their
+     /// data: a host copy of a buffer is made on first use.
++    /// Makes the view of slot `index` (at `handle` in title memory) if it
++    /// is a placed texture's left null for later ([`Self::mirror`]), as a
++    /// draw reading it through a table would: true if it made it.
++    pub(crate) fn make_placed(&self, index: u32, handle: u64) -> bool {
++        use std::sync::atomic::Ordering::Relaxed;
++        if index >= self.count || self.sampler {
++            PLACED_WHY[0].fetch_add(1, Relaxed);
++            return false;
++        }
++        // SAFETY: the handle is a descriptor slot in title memory.
++        let [tag, i, generation] = unsafe { (handle as *const [u32; 3]).read_unaligned() };
++        let key = u64::from(generation) << 32 | u64::from(i);
++        {
++            let made = self.made.lock().unwrap_or_else(|e| e.into_inner());
++            if made[index as usize] == key {
++                PLACED_WHY[1].fetch_add(1, Relaxed);
++                return false;
++            }
++        }
++        let Some(view) = (tag == VIEW_TAG).then(|| view_at(i, generation)).flatten() else {
++            PLACED_WHY[2].fetch_add(1, Relaxed);
++            return false;
++        };
++        if !is_placed_texture(&view) {
++            PLACED_WHY[3].fetch_add(1, Relaxed);
++            return false;
++        }
++        self.mirror(index, handle, true);
++        true
++    }
++
+     pub(crate) fn mirror(&self, index: u32, handle: u64, for_draw: bool) -> Option<View> {
+         if index >= self.count {
+             // Diagnostic (NVIDIA heap cap): the highest title slot past the
+@@ -632,6 +663,9 @@ impl HostHeap {
+                 make(&view, self.cpu(index))
+             };
+             if kept.is_none() && !self.sampler {
++                if !later && is_placed_texture(&view) {
++                    PLACED_FAILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                }
+                 null_for(&view, self.cpu(index));
+             }
+             if !self.sampler {
+@@ -1176,6 +1210,14 @@ fn make(view: &View, at: D3D12_CPU_DESCRIPTOR_HANDLE) -> Option<Kept> {
+ }
+ 
+ /// Whether `view` is a view of a texture the title placed in memory itself.
++/// Marked slots not made, by reason: past the heap or a sampler heap,
++/// already made, no view of ours there, not a placed texture.
++/// Placed-texture views the host tried to make and could not (left null
++/// although marked made).
++pub(crate) static PLACED_FAILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++pub(crate) static PLACED_WHY: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
++
+ fn is_placed_texture(view: &View) -> bool {
+     matches!(view, View::Placed(_, resource, _) if resource[0] != 1)
+ }
+diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
+index 1df816fbb3..95eec55df5 100644
+--- a/crates/victory-gpu/src/draw.rs
++++ b/crates/victory-gpu/src/draw.rs
+@@ -82,6 +82,9 @@ pub(crate) struct State {
+     /// The title-memory page table made for this list (`crate::memory`)
+     /// and its view heap.
+     memory: Option<(usize, crate::memory::Map)>,
++    /// The heap-usage bitmap made for this list and its view heap
++    /// (`crate::descriptor::usage_bitmap`).
++    heap_usage: Option<(usize, u64)>,
+     /// Views made for root SRVs and UAVs in this list ([`State::root_view`]):
+     /// (view heap, host copy, unordered access) → dynamic slot.
+     root_slots: std::collections::HashMap<(usize, usize, bool), u32>,
+@@ -742,6 +745,29 @@ impl State {
+                 }
+             }
+         }
++        for stage in &p.stages {
++            if let Some(param) = stage.heap_used {
++                let heap = self.heaps[0];
++                let gpu = match self.heap_usage {
++                    Some((h, gpu)) if h == heap => Some(gpu),
++                    _ => crate::descriptor::usage_bitmap(list, heap),
++                };
++                let Some(gpu) = gpu else {
++                    once!("a shader marking heap slots dropped: no usage bitmap");
++                    not_run("heap usage without a bitmap");
++                    return false;
++                };
++                self.heap_usage = Some((heap, gpu));
++                // SAFETY: an open list; the bitmap lives with the list.
++                unsafe {
++                    if compute {
++                        l.SetComputeRootUnorderedAccessView(param, gpu);
++                    } else {
++                        l.SetGraphicsRootUnorderedAccessView(param, gpu);
++                    }
++                }
++            }
++        }
+         #[cfg(feature = "diagnostics")]
+         crate::capture::binding("");
+         true
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index 6d01a7e00e..bbc23225e9 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -2382,6 +2382,13 @@ impl Meter {
+                 crate::texture::ALIAS_COPIES.swap(0, Ordering::Relaxed) as f64 / frames,
+                 crate::twin::COPIES.swap(0, Ordering::Relaxed) as f64 / frames,
+             );
++            let (marked, made) = crate::descriptor::take_usage();
++            tracing::info!(
++                "heap usage: {marked} heap slots marked read by shaders, {made} placed-texture views made for them (last 5 s); not made: {:?}, no heap {}; placed textures that failed to make: {}",
++                crate::descriptor::host::PLACED_WHY.each_ref().map(|a| a.swap(0, Ordering::Relaxed)),
++                crate::descriptor::USAGE.2.swap(0, Ordering::Relaxed),
++                crate::descriptor::host::PLACED_FAILED.swap(0, Ordering::Relaxed),
++            );
+             #[cfg(feature = "diagnostics")]
+             {
+                 let copy_frames = std::mem::take(&mut self.copy_stats_frames) as f64;
+diff --git a/crates/victory-gpu/src/pipeline/host.rs b/crates/victory-gpu/src/pipeline/host.rs
+index 9dd4daa90f..07977a7faf 100644
+--- a/crates/victory-gpu/src/pipeline/host.rs
++++ b/crates/victory-gpu/src/pipeline/host.rs
+@@ -262,6 +262,9 @@ pub(crate) struct Stage {
+     /// written-pages bitmap (`crate::memory`), if it reads or writes there.
+     pub(crate) memory: Option<u32>,
+     pub(crate) memory_dirty: Option<u32>,
++    /// Our root parameter of the heap-usage bitmap
++    /// (`crate::descriptor::usage_bitmap`), if it marks heap slots.
++    pub(crate) heap_used: Option<u32>,
+     /// Our root parameter of the heap's view addresses (`crate::memory`).
+     pub(crate) view_addresses: Option<u32>,
+ }
+@@ -394,6 +397,7 @@ impl HostPipeline {
+                 root_uavs: Vec::new(),
+                 memory: None,
+                 memory_dirty: None,
++                heap_used: None,
+                 view_addresses: None,
+             };
+             let dwords = t.user_data_dwords();
+@@ -447,6 +451,7 @@ impl HostPipeline {
+                 (t.memory, D3D12_ROOT_PARAMETER_TYPE_SRV, 0, &mut stage.memory),
+                 (t.memory_writes, D3D12_ROOT_PARAMETER_TYPE_UAV, 0, &mut stage.memory_dirty),
+                 (t.view_addresses, D3D12_ROOT_PARAMETER_TYPE_SRV, 1, &mut stage.view_addresses),
++                (t.heap_usage, D3D12_ROOT_PARAMETER_TYPE_UAV, 1, &mut stage.heap_used),
+             ] {
+                 if used {
+                     *out = Some(params.len() as u32);
+diff --git a/crates/victory-gpu/src/shader_cache.rs b/crates/victory-gpu/src/shader_cache.rs
+index 1a1d8089d1..b267ba3c17 100644
+--- a/crates/victory-gpu/src/shader_cache.rs
++++ b/crates/victory-gpu/src/shader_cache.rs
+@@ -205,6 +205,7 @@ fn encode(translation: &Result<HostShader, String>) -> Vec<u8> {
+         root_uavs,
+         memory,
+         memory_writes,
++        heap_usage,
+         view_addresses,
+         heap,
+         heap_writes,
+@@ -256,7 +257,8 @@ fn encode(translation: &Result<HostShader, String>) -> Vec<u8> {
+             | u32::from(*memory_writes) << 1
+             | u32::from(*view_addresses) << 2
+             | u32::from(*heap) << 3
+-            | u32::from(*heap_writes) << 4,
++            | u32::from(*heap_writes) << 4
++            | u32::from(*heap_usage) << 5,
+     );
+     out
+ }
+@@ -330,6 +332,7 @@ fn decode(bytes: &[u8]) -> Option<Result<HostShader, String>> {
+         root_uavs,
+         memory: memory & 1 != 0,
+         memory_writes: memory & 2 != 0,
++        heap_usage: memory & 32 != 0,
+         view_addresses: memory & 4 != 0,
+         heap: memory & 8 != 0,
+         heap_writes: memory & 16 != 0,
+@@ -362,6 +365,7 @@ mod tests {
+             root_uavs: vec![4],
+             memory: true,
+             memory_writes: true,
++            heap_usage: true,
+             view_addresses: true,
+             heap: true,
+             heap_writes: true,
+diff --git a/crates/victory-shader/src/emit/bvh_tests.rs b/crates/victory-shader/src/emit/bvh_tests.rs
+index e389079f20..a7a4761ffa 100644
+--- a/crates/victory-shader/src/emit/bvh_tests.rs
++++ b/crates/victory-shader/src/emit/bvh_tests.rs
+@@ -605,6 +605,7 @@ fn build(wide: bool, memory: bool) -> HostShader {
+         root_uavs: lowered.root_uavs,
+         memory: lowered.memory,
+         memory_writes: lowered.memory_writes,
++        heap_usage: lowered.heap_usage,
+         view_addresses: lowered.view_addresses,
+         heap: lowered.heap,
+         heap_writes: lowered.heap_writes,
+diff --git a/crates/victory-shader/src/emit/host.rs b/crates/victory-shader/src/emit/host.rs
+index 1147c78613..bc9e804912 100644
+--- a/crates/victory-shader/src/emit/host.rs
++++ b/crates/victory-shader/src/emit/host.rs
+@@ -165,6 +165,9 @@ impl Host {
+         if stages.iter().any(|(s, _)| s.view_addresses) {
+             views.push((1, super::MEMORY_SPACE, 1));
+         }
++        if stages.iter().any(|(s, _)| s.heap_usage) {
++            views.push((1, super::MEMORY_SPACE, 2));
++        }
+         for (register, space, kind) in views {
+             params.push(D3D12_ROOT_PARAMETER1 {
+                 ParameterType: match kind {
+@@ -701,6 +704,7 @@ fn fmad_probe() -> Result<HostShader, crate::ShaderError> {
+         root_uavs: lowered.root_uavs,
+         memory: lowered.memory,
+         memory_writes: lowered.memory_writes,
++        heap_usage: lowered.heap_usage,
+         view_addresses: lowered.view_addresses,
+         heap: lowered.heap,
+         heap_writes: lowered.heap_writes,
+@@ -799,6 +803,7 @@ fn stub(pixel: bool, outputs: Vec<SigElement>) -> HostShader {
+         root_uavs: Vec::new(),
+         memory: false,
+         memory_writes: false,
++        heap_usage: false,
+         view_addresses: false,
+         heap: false,
+         heap_writes: false,
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index df1d2a2360..8abbec980b 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -42,6 +42,8 @@ pub(crate) struct Lowered {
+     pub memory: bool,
+     /// Writes there (the written-pages bitmap).
+     pub memory_writes: bool,
++    /// Marks the heap slots it reads (the heap-usage bitmap).
++    pub heap_usage: bool,
+     /// Reads buffer views' addresses from descriptors (the view addresses).
+     pub view_addresses: bool,
+     /// Takes descriptors from the resource heap itself (root type 5, not
+@@ -1305,6 +1307,7 @@ impl<'a> Lower<'a> {
+         let root_uavs = self.s.root_uavs.iter().map(|r| r.0).collect();
+         let memory = self.s.memory.is_some();
+         let memory_writes = self.s.memory_dirty.is_some();
++        let heap_usage = self.s.heap_used.is_some();
+         let view_addresses = self.s.view_addresses.is_some();
+         let cmp_samplers = self.s.cmp_samplers;
+         Ok(Lowered {
+@@ -1314,6 +1317,7 @@ impl<'a> Lower<'a> {
+             root_uavs,
+             memory,
+             memory_writes,
++            heap_usage,
+             view_addresses,
+             heap: self.heap[0],
+             heap_writes: self.heap[1],
+@@ -4779,6 +4783,9 @@ impl<'a> Lower<'a> {
+             self.heap[0] = true;
+             self.heap[1] |= props.0 & 0x1000 != 0;
+         }
++        // Shader views read from the heap itself mark their slots in the
++        // heap-usage bitmap (`HostShader::heap_usage`).
++        let mark = !sampler && props.0 & 0x1000 == 0 && self.is_heap_direct(src) && heap_usage_marks();
+         match src {
+             Source::Loaded { load, first } => {
+                 let key = (self.cur, *load, *first, sampler, props.0);
+@@ -4790,6 +4797,9 @@ impl<'a> Lower<'a> {
+                 // A waterfall loop's load at the first lane's offset reads
+                 // each lane's own entry (see `resource::Waterfall`).
+                 let per_lane = self.x.res.waterfall.loads.contains(load);
++                if mark {
++                    self.mark_heap_use(index, !per_lane);
++                }
+                 let h = self
+                     .s
+                     .heap_handle(self.cur, index, sampler, per_lane, props);
+@@ -4908,6 +4918,9 @@ impl<'a> Lower<'a> {
+                 let phi = self.s.m.phi(join, self.s.t.i32);
+                 self.s.m.set_phi(phi, incoming);
+                 let index = self.buffer_guard(src, phi, sampler, props);
++                if mark {
++                    self.mark_heap_use(index, true);
++                }
+                 Ok(self.s.heap_handle(self.cur, index, sampler, false, props))
+             }
+             Source::Select { scc, args } => {
+@@ -4927,6 +4940,9 @@ impl<'a> Lower<'a> {
+                 let clear = self.heap_index(b, fb, sampler)?;
+                 let index = self.s.m.select(self.cur, cond, set, clear);
+                 let index = self.buffer_guard(src, index, sampler, props);
++                if mark {
++                    self.mark_heap_use(index, true);
++                }
+                 Ok(self.s.heap_handle(self.cur, index, sampler, false, props))
+             }
+             Source::Fetched { .. } | Source::Lanes { .. } | Source::LanePhi { .. } => {
+@@ -4935,6 +4951,9 @@ impl<'a> Lower<'a> {
+                 // index, non-uniform.
+                 let index = self.lane_heap_index(src, sampler)?;
+                 let index = self.buffer_guard(src, index, sampler, props);
++                if mark {
++                    self.mark_heap_use(index, false);
++                }
+                 Ok(self.s.heap_handle(self.cur, index, sampler, true, props))
+             }
+         }
+@@ -5091,6 +5110,28 @@ impl<'a> Lower<'a> {
+ 
+     /// The heap index of the descriptor at dword `first` of what the scalar
+     /// load at `load` reads, computed in the current block.
++    /// Sets bit `index` of the heap-usage bitmap, in every lane.
++    /// shortcut: no branch to a single lane when the index is uniform:
++    /// callers keep emitting into the block they started in, so a split
++    /// here broke dominance ("forward reference outside a phi", run vu12);
++    /// every lane's atomic OR costs more GPU time.
++    fn mark_heap_use(&mut self, index: V, _uniform: bool) {
++        let bitmap = self.s.heap_used_handle();
++        let c = self.cur;
++        let k = |l: &mut Self, v: u32| l.s.m.i32(v);
++        let last = k(self, crate::emit::shader::HEAP_VIEWS - 1);
++        let over = self.s.m.cmp(c, pred::IUGT, index, last);
++        let index = self.s.m.select(c, over, last, index);
++        let (k5, k31, k2, one) = (k(self, 5), k(self, 31), k(self, 2), k(self, 1));
++        let iu = self.s.m.undef(self.s.t.i32);
++        // Byte offset of the bitmap dword; operation 2 is OR.
++        let word = self.s.m.bin(c, Bin::LShr, index, k5);
++        let word = self.s.m.bin(c, Bin::Shl, word, k2);
++        let bit = self.s.m.bin(c, Bin::And, index, k31);
++        let bit = self.s.m.bin(c, Bin::Shl, one, bit);
++        self.s.op(c, "atomicBinOp.i32", Attr::NoUnwind, self.s.t.i32, 78, &[bitmap, k2, word, iu, iu, bit]);
++    }
++
+     fn heap_index(&mut self, load: Site, first: u8, sampler: bool) -> Result<V, Why> {
+         let a = *self
+             .scalar
+@@ -10616,3 +10657,15 @@ mod tests {
+         }
+     }
+ }
++
++/// Whether translated shaders mark the heap slots they read
++/// (`VICTORY_HEAP_USAGE`, on unless 0). Off, shaders are as before.
++fn heap_usage_marks() -> bool {
++    // shortcut: off in unit tests, whose hardware harness binds only the
++    // root parameters each test names (the bitmap would be unbound).
++    if cfg!(test) {
++        return false;
++    }
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var("VICTORY_HEAP_USAGE").map_or(true, |v| v != "0"))
++}
+diff --git a/crates/victory-shader/src/emit/memory_tests.rs b/crates/victory-shader/src/emit/memory_tests.rs
+index e6801a54c2..46a0882178 100644
+--- a/crates/victory-shader/src/emit/memory_tests.rs
++++ b/crates/victory-shader/src/emit/memory_tests.rs
+@@ -194,6 +194,7 @@ fn program() -> HostShader {
+         root_uavs: l.root_uavs,
+         memory: l.memory,
+         memory_writes: l.memory_writes,
++        heap_usage: l.heap_usage,
+         view_addresses: l.view_addresses,
+         heap: l.heap,
+         heap_writes: l.heap_writes,
+@@ -424,6 +425,7 @@ fn root_views_read_their_copy_and_zeros_past_it() {
+         root_uavs: l.root_uavs,
+         memory: l.memory,
+         memory_writes: l.memory_writes,
++        heap_usage: l.heap_usage,
+         view_addresses: l.view_addresses,
+         heap: l.heap,
+         heap_writes: l.heap_writes,
+diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
+index 6707ebb9bb..ce99d19392 100644
+--- a/crates/victory-shader/src/emit/mod.rs
++++ b/crates/victory-shader/src/emit/mod.rs
+@@ -275,6 +275,12 @@ pub struct HostShader {
+     /// Whether the host binds the page bitmap `u0` in [`MEMORY_SPACE`]
+     /// (pages written and pages missed): whenever [`HostShader::memory`].
+     pub memory_writes: bool,
++    /// Whether the host binds the heap-usage bitmap `u1` in
++    /// [`MEMORY_SPACE`]: shaders taking resource views from the heap itself
++    /// set bit `index` for each slot they read (once per wave when uniform),
++    /// so that the host makes the views it left null (placed textures) the
++    /// next time.
++    pub heap_usage: bool,
+     /// Whether it reads buffer views' title addresses from their
+     /// descriptors: the host binds the view addresses `t1` in
+     /// [`MEMORY_SPACE`] (module notes, "Title memory").
+@@ -466,6 +472,7 @@ pub fn emit(
+         root_uavs: l.root_uavs,
+         memory: l.memory,
+         memory_writes: l.memory_writes,
++        heap_usage: l.heap_usage,
+         view_addresses: l.view_addresses,
+         heap: l.heap,
+         heap_writes: l.heap_writes,
+@@ -824,6 +831,7 @@ mod tests {
+             root_uavs: Vec::new(),
+             memory: false,
+             memory_writes: false,
++            heap_usage: false,
+             view_addresses: false,
+             heap: false,
+             heap_writes: false,
+@@ -840,6 +848,7 @@ mod tests {
+                 root_uavs: Vec::new(),
+                 memory: false,
+                 memory_writes: false,
++                heap_usage: false,
+                 view_addresses: false,
+                 heap: false,
+                 heap_writes: false,
+diff --git a/crates/victory-shader/src/emit/semantics_tests.rs b/crates/victory-shader/src/emit/semantics_tests.rs
+index 3b9f8d23ec..24b91513c2 100644
+--- a/crates/victory-shader/src/emit/semantics_tests.rs
++++ b/crates/victory-shader/src/emit/semantics_tests.rs
+@@ -305,6 +305,7 @@ fn lower_program(words: &[u32]) -> Result<HostShader, String> {
+         root_uavs: lowered.root_uavs,
+         memory: lowered.memory,
+         memory_writes: lowered.memory_writes,
++        heap_usage: lowered.heap_usage,
+         view_addresses: lowered.view_addresses,
+         heap: lowered.heap,
+         heap_writes: lowered.heap_writes,
+diff --git a/crates/victory-shader/src/emit/shader.rs b/crates/victory-shader/src/emit/shader.rs
+index 51e170c21c..2ec7506ad4 100644
+--- a/crates/victory-shader/src/emit/shader.rs
++++ b/crates/victory-shader/src/emit/shader.rs
+@@ -98,6 +98,8 @@ pub(crate) struct Shader {
+     pub memory: Option<V>,
+     /// The written-pages bitmap's handle, once title memory is written.
+     pub memory_dirty: Option<V>,
++    /// The heap-usage bitmap's handle, once a heap slot is marked.
++    pub heap_used: Option<V>,
+     /// The view addresses' handle, once a descriptor's address is read.
+     pub view_addresses: Option<V>,
+     pub flags: u64,
+@@ -160,6 +162,7 @@ impl Shader {
+             root_uavs: Vec::new(),
+             memory: None,
+             memory_dirty: None,
++            heap_used: None,
+             view_addresses: None,
+             flags: 0,
+             nonuniform_handles: 0,
+@@ -398,6 +401,31 @@ impl Shader {
+         h
+     }
+ 
++    /// The handle of the heap-usage bitmap (`u1` in [`MEMORY_SPACE`], a raw
++    /// buffer), made in the entry block.
++    pub fn heap_used_handle(&mut self) -> V {
++        if let Some(h) = self.heap_used {
++            return h;
++        }
++        let r = self.m.i32(1);
++        let bind = [r, r, self.m.i32(MEMORY_SPACE), self.m.i8(1)];
++        let bind = self.m.aggregate(self.t.bind, &bind);
++        let f = self.m.bool(false);
++        let block = self.entry;
++        let h = self.op(
++            block,
++            "createHandleFromBinding",
++            Attr::ReadNone,
++            self.t.handle,
++            217,
++            &[bind, r, f],
++        );
++        let h = self.annotate(block, h, 11 | 0x1000, 0);
++        self.flags |= flags::RAW_BUFFERS;
++        self.heap_used = Some(h);
++        h
++    }
++
+     /// The handle of immediate sampler `n` (a comparison sampler when its
+     /// bit in `cmp_samplers` is set).
+     pub fn sampler_handle(&mut self, block: usize, n: u32) -> V {
+@@ -488,6 +516,7 @@ impl Shader {
+             || !self.root_uavs.is_empty()
+             || self.memory.is_some()
+             || self.memory_dirty.is_some()
++            || self.heap_used.is_some()
+             || self.view_addresses.is_some()
+         {
+             let empty = self.m.md_str("");
+@@ -580,7 +609,7 @@ impl Shader {
+                 srvs = Some(self.m.md_node(list));
+             }
+             let mut uavs = None;
+-            if !self.root_uavs.is_empty() || self.memory_dirty.is_some() {
++            if !self.root_uavs.is_empty() || self.memory_dirty.is_some() || self.heap_used.is_some() {
+                 let ty = self
+                     .m
+                     .named_struct("struct.RWByteAddressBuffer", vec![self.t.i32]);
+@@ -594,6 +623,7 @@ impl Shader {
+                     .iter()
+                     .map(|&(slot, _)| (ROOT_CBV_SPACE, u32::from(slot)))
+                     .chain(self.memory_dirty.map(|_| (MEMORY_SPACE, 0)))
++                    .chain(self.heap_used.map(|_| (MEMORY_SPACE, 1)))
+                     .collect();
+                 for (n, (space, slot)) in all.into_iter().enumerate() {
+                     let ops = vec![
+diff --git a/crates/victory-shader/src/emit/stride_tests.rs b/crates/victory-shader/src/emit/stride_tests.rs
+index 25b55370d1..6602c029cc 100644
+--- a/crates/victory-shader/src/emit/stride_tests.rs
++++ b/crates/victory-shader/src/emit/stride_tests.rs
+@@ -210,6 +210,7 @@ fn build(
+         root_uavs: lowered.root_uavs,
+         memory: lowered.memory,
+         memory_writes: lowered.memory_writes,
++        heap_usage: lowered.heap_usage,
+         view_addresses: lowered.view_addresses,
+         heap: lowered.heap,
+         heap_writes: lowered.heap_writes,
+diff --git a/crates/victory-shader/src/emit/synthetic_tests.rs b/crates/victory-shader/src/emit/synthetic_tests.rs
+index 48b92c4d96..f74c25e0ab 100644
+--- a/crates/victory-shader/src/emit/synthetic_tests.rs
++++ b/crates/victory-shader/src/emit/synthetic_tests.rs
+@@ -114,6 +114,7 @@ fn build(words: &[u32]) -> Result<HostShader, crate::ShaderError> {
+         root_uavs: lowered.root_uavs,
+         memory: lowered.memory,
+         memory_writes: lowered.memory_writes,
++        heap_usage: lowered.heap_usage,
+         view_addresses: lowered.view_addresses,
+         heap: lowered.heap,
+         heap_writes: lowered.heap_writes,
+diff --git a/crates/victory-shader/src/emit/valu_tests.rs b/crates/victory-shader/src/emit/valu_tests.rs
+index de58ad0d34..abac99c8cb 100644
+--- a/crates/victory-shader/src/emit/valu_tests.rs
++++ b/crates/victory-shader/src/emit/valu_tests.rs
+@@ -153,6 +153,7 @@ fn try_build_valu_cs(body: &[u32]) -> Result<HostShader, crate::ShaderError> {
+         root_uavs: lowered.root_uavs,
+         memory: lowered.memory,
+         memory_writes: lowered.memory_writes,
++        heap_usage: lowered.heap_usage,
+         view_addresses: lowered.view_addresses,
+         heap: lowered.heap,
+         heap_writes: lowered.heap_writes,
+@@ -1236,6 +1237,7 @@ fn lower_cs32(words: &[u32], used: &[(u8, ResourceType, u32, u8)], validate: boo
+         root_uavs: lowered.root_uavs,
+         memory: lowered.memory,
+         memory_writes: lowered.memory_writes,
++        heap_usage: lowered.heap_usage,
+         view_addresses: lowered.view_addresses,
+         heap: lowered.heap,
+         heap_writes: lowered.heap_writes,
+diff --git a/crates/victory-shader/src/emit/waterfall_tests.rs b/crates/victory-shader/src/emit/waterfall_tests.rs
+index 537deb52fe..21f0b5b322 100644
+--- a/crates/victory-shader/src/emit/waterfall_tests.rs
++++ b/crates/victory-shader/src/emit/waterfall_tests.rs
+@@ -85,6 +85,7 @@ fn build(words: &[u32], buffers: bool) -> HostShader {
+         root_uavs: lowered.root_uavs,
+         memory: lowered.memory,
+         memory_writes: lowered.memory_writes,
++        heap_usage: lowered.heap_usage,
+         view_addresses: lowered.view_addresses,
+         heap: lowered.heap,
+         heap_writes: lowered.heap_writes,

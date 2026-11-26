@@ -1,0 +1,452 @@
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -2040,8 +2040,16 @@
+         // after an earlier write declaration used to patch its snapshot here.
+         #[cfg(feature = "diagnostics")]
+         let _timed = crate::watch::Timed(std::time::Instant::now(), crate::copystat::C::StepGpuWriteUs);
+-        for (shadow, address, len) in self.snapshots {
+-            shadow.writing(address, len, false);
++        static MERGE: OnceLock<bool> = OnceLock::new();
++        if *MERGE.get_or_init(|| crate::switch::on("VICTORY_MERGE_WRITE_SNAPSHOTS")) {
++            self.snapshots.sort_unstable_by_key(|(s, at, _)| (std::sync::Arc::as_ptr(s), *at));
++            for group in self.snapshots.chunk_by(|a, b| std::sync::Arc::ptr_eq(&a.0, &b.0)) {
++                group[0].0.snapshot_declarations(group.iter().map(|(_, at, n)| (*at, *n)));
++            }
++        } else {
++            for (shadow, address, len) in self.snapshots {
++                shadow.writing(address, len, false);
++            }
+         }
+     }
+ 
+@@ -2200,7 +2208,15 @@
+     let page_end = (at | 0xfff).saturating_add(1).min(end);
+     // SAFETY: a valid out pointer of the right size, filled by VirtualQuery.
+     let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+-    if unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) } == 0 {
++    #[cfg(feature = "diagnostics")]
++    let started = Instant::now();
++    let queried = unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) };
++    #[cfg(feature = "diagnostics")]
++    {
++        crate::copystat::add(crate::copystat::C::Queries, 1);
++        crate::copystat::add(crate::copystat::C::QueryUs, started.elapsed().as_micros() as u64);
++    }
++    if queried == 0 {
+         return (page_end, true);
+     }
+     let limit = (info.BaseAddress as usize).saturating_add(info.RegionSize);
+--- a/crates/victory-gpu/src/lib.rs
++++ b/crates/victory-gpu/src/lib.rs
+@@ -71,6 +71,15 @@
+ #[cfg(windows)]
+ mod watch;
+ 
++/// A managed physical source may compare with and refresh a caller-owned host upload buffer.
++#[cfg(all(windows, feature="diagnostics"))]
++pub static XMEM_VIEW_REFRESH: std::sync::OnceLock<unsafe fn(usize,*mut u8,usize)->Option<usize>> = std::sync::OnceLock::new();
++
++/// Run disjoint upload comparisons on the same persistent workers as the submit path.
++#[cfg(all(windows,feature="diagnostics"))]
++pub fn compare_managed_spans<T: Sync>(spans: &[T], compare: impl Fn(&T)->usize + Sync) -> usize {
++    host::upload_jobs::run(spans, 4, compare)
++}
+ #[cfg(windows)]
+ pub use host::on_failure;
+ #[cfg(windows)]
+--- a/crates/victory-gpu/src/shadow.rs
++++ b/crates/victory-gpu/src/shadow.rs
+@@ -281,6 +281,35 @@
+             t.arm(address, address + len);
+             return;
+         }
++        self.snapshot(address, len);
++    }
++
++    /// Capture the final host values once for the union of sorted declarations.
++    /// Keep the original keys because command lists release those exact ranges.
++    pub(crate) fn snapshot_declarations(
++        &self,
++        ranges: impl Iterator<Item = (usize, usize)> + Clone,
++    ) {
++        self.pending
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .extend(ranges.clone().map(|(at, len)| (at, at + len)));
++        let mut spans = ranges.filter(|&(_, len)| len != 0);
++        let Some((mut start, len)) = spans.next() else { return };
++        let mut end = start + len;
++        for (at, len) in spans {
++            if at > end {
++                self.snapshot(start, end - start);
++                start = at;
++                end = at + len;
++            } else {
++                end = end.max(at + len);
++            }
++        }
++        self.snapshot(start, end - start);
++    }
++
++    fn snapshot(&self, address: usize, len: usize) {
+         let (from, to) = self.inside(address, len);
+         if from >= to {
+             return;
+@@ -598,6 +627,17 @@
+         let (from, to) = (from.max(start), to.min(end));
+         // SAFETY: inside the mapping (`from` and `to` are within the buffer).
+         let at = unsafe { self.data.add(from - start) };
++        #[cfg(feature="diagnostics")]
++        if self.len == 174 << 20 && from == start && to == end
++            && let Some(op) = crate::XMEM_VIEW_REFRESH.get()
++            // SAFETY: caller owns this live host staging buffer for the submission's refresh.
++            && let Some(stored) = unsafe { op(from, at, to-from) }
++        {
++            static OK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++            let n = OK.fetch_add(1,std::sync::atomic::Ordering::Relaxed)+1;
++            if n <= 3 || n % 256 == 0 { tracing::info!(n,stored,"managed read refresh"); }
++            return to-from;
++        }
+         crate::host::copy_mapped(at, from as *const u8, to - from, false);
+         to - from
+     }
+@@ -1139,6 +1179,38 @@
+         unregister(p, p as u64);
+     }
+ 
++    #[test]
++    fn merged_declarations_preserve_gaps_and_original_release_keys() {
++        let p = crate::watch::tests::pool(2);
++        register(p, p as u64, (2 * PAGE) as u64);
++        let Some(shadow) = find(p as u64, (2 * PAGE) as u64) else {
++            unregister(p, p as u64);
++            return;
++        };
++        shadow.update(p, 2 * PAGE);
++        let spans = [(p, 32), (p + 16, 32), (p + 48, 8), (p + 60, 0), (p + PAGE, 12)];
++        shadow.snapshot_declarations(spans.into_iter());
++        {
++            let before = shadow.before.lock().unwrap();
++            let segments: Vec<_> = before.0.iter().map(|(at, v)| (*at, v.len())).collect();
++            assert_eq!(segments, [(0, 56), (PAGE, 12)]);
++        }
++        assert_eq!(shadow.pending.lock().unwrap().len(), spans.len());
++        shadow.write_host((p + 20) as u64, &[0xa3]);
++        shadow.write_host((p + PAGE + 2) as u64, &[0xba]);
++        for &(at, len) in spans.iter().rev() {
++            shadow.copy_back(at, len);
++        }
++        // SAFETY: this test owns both committed pages.
++        unsafe {
++            assert_eq!(*((p + 20) as *const u8), 0xa3);
++            assert_eq!(*((p + PAGE + 2) as *const u8), 0xba);
++        }
++        assert!(shadow.pending.lock().unwrap().is_empty());
++        assert!(shadow.before.lock().unwrap().0.is_empty());
++        unregister(p, p as u64);
++    }
++
+     /// Pages shaders marked (`copy_back_marks`, `victory_shader::emit`
+     /// "Write marks") go back by the bytes the GPU changed. The title writes
+     /// a marked page after the copy took it (the guard saves its bytes from
+--- a/crates/victory-hle/src/modules/xmem.rs
++++ b/crates/victory-hle/src/modules/xmem.rs
+@@ -777,6 +777,8 @@
+ /// Maps `slice` and the slices after it over `[base, base + len)`, which
+ /// must lie in one placeholder.
+ fn map(physical: &mut Physical, base: usize, len: usize, slice: Slice) -> bool {
++    #[cfg(feature="diagnostics")]
++    if victory_gpu::XMEM_VIEW_REFRESH.get().is_some() { hot_view::invalidate(base,len); }
+     // SAFETY: splits the placeholder around the range (failing harmlessly
+     // when the range is the whole placeholder), then maps the section
+     // there; both act only on placeholders.
+@@ -887,6 +889,8 @@
+ /// Returns `[base, base + len)` to placeholders; views reaching past it
+ /// are mapped again outside it.
+ fn unmap(physical: &mut Physical, base: usize, len: usize) {
++    #[cfg(feature="diagnostics")]
++    if victory_gpu::XMEM_VIEW_REFRESH.get().is_some() { hot_view::invalidate(base,len); }
+     // No bytes: no view to return. The search below would still find the
+     // view holding `base` and cut it in two there, and its range of views
+     // starting inside would run backwards (which `BTreeMap` panics on).
+@@ -1007,7 +1011,182 @@
+     moved.into()
+ }
+ 
++// An independent read-only view stays mapped even if the title unmaps its own address.
++// Validate the title's permissions and recheck the range identity before accepting bytes.
++#[cfg(feature = "diagnostics")]
++mod hot_view {
++    use super::*;
++    use std::sync::RwLock;
++    use windows_sys::Win32::System::Memory::{FILE_MAP_READ, MapViewOfFile, UnmapViewOfFile, MEM_MAPPED};
++
++    struct ReadView {
++        address: usize,
++        len: usize,
++    }
++
++    impl Drop for ReadView {
++        fn drop(&mut self) {
++            // SAFETY: this address is our own independent read-only view; the last reader is gone.
++            unsafe { UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS { Value: self.address as *mut _ }) };
++        }
++    }
++
++    struct Layout {
++        start: usize,
++        end: usize,
++        views: Vec<(usize, usize, usize)>, // clipped start, end, actual title allocation base
++        runs: Vec<ReadView>,
++    }
++
++    #[cfg(test)]
++    pub(super) static AFTER_COPY: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> =
++        std::sync::Mutex::new(None);
++    static CURRENT: RwLock<Option<Arc<Layout>>> = RwLock::new(None);
++
++    // Call before changing a title mapping, while its physical registry is held. Acquiring
++    // the write lock only on overlap keeps unrelated mappings out of a buffer refresh.
++    pub(super) fn invalidate(start: usize, len: usize) {
++        let end = start.saturating_add(len);
++        if CURRENT.read().unwrap_or_else(|p| p.into_inner()).as_ref()
++            .is_some_and(|old| old.start < end && start < old.end)
++        {
++            CURRENT.write().unwrap_or_else(|p| p.into_inner()).take();
++        }
++    }
++
++    fn build(at: usize, end: usize, physical: &Physical) -> Option<Layout> {
++        let mut slices: Vec<(Slice, usize)> = Vec::new();
++        let mut views = Vec::new();
++        let mut cursor = at;
++        while cursor < end {
++            let (&base, (size, slice)) = physical.views.range(..=cursor).next_back()?;
++            let stop = end.min(base.checked_add(*size)?);
++            if stop <= cursor { return None; } // unregistered address, including holes
++            let index = slice.index + (cursor - base) / PAGE;
++            let count = (stop - cursor) / PAGE;
++            if let Some((prev, n)) = slices.last_mut()
++                && Arc::ptr_eq(&prev.section, &slice.section) && prev.index + *n == index
++            {
++                *n += count;
++            } else {
++                if slices.len() == 8 { return None; }
++                slices.push((Slice { section: slice.section.clone(), index }, count));
++            }
++            views.push((cursor, stop, base));
++            if views.len() > 32 { return None; }
++            cursor = stop;
++        }
++        let mut runs = Vec::new();
++        for (slice, count) in slices {
++            let offset = (slice.index * PAGE) as u64;
++            let len = count * PAGE;
++            // SAFETY: complete consecutive pages in a live section. This mapping itself holds
++            // the underlying section alive independently of future physical frees or remaps.
++            let mapping = unsafe { MapViewOfFile(slice.section.0, FILE_MAP_READ, (offset>>32) as u32, offset as u32, len) };
++            if mapping.Value.is_null() { return None; }
++            runs.push(ReadView { address: mapping.Value as usize, len });
++        }
++        Some(Layout { start: at, end, views, runs })
++    }
++
++    fn layout(at: usize, end: usize) -> Option<Arc<Layout>> {
++        if let Some(old) = CURRENT.read().unwrap_or_else(|p| p.into_inner()).as_ref()
++            && (old.start, old.end) == (at,end) { return Some(old.clone()); }
++        // Never wait for a title mapping while holding GPU submission locks.
++        let physical = PHYSICAL.try_lock().ok()?;
++        let new = Arc::new(build(at, end, &physical)?);
++        *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = Some(new.clone());
++        Some(new)
++    }
++
++    fn readable(layout: &Layout) -> bool {
++        use windows_sys::Win32::System::Memory::{VirtualQuery, PAGE_READONLY, PAGE_WRITECOPY};
++        layout.views.iter().all(|&(begin,end,base)| {
++            let mut cursor = begin;
++            while cursor < end {
++                let mut info = MEMORY_BASIC_INFORMATION::default();
++                // SAFETY: only querying metadata; no guest byte is dereferenced here.
++                if unsafe { VirtualQuery(cursor as *const _, &mut info, size_of_val(&info)) } == 0
++                    || info.State != MEM_COMMIT || info.Type != MEM_MAPPED
++                    || info.AllocationBase as usize != base
++                    || !matches!(info.Protect, PAGE_READONLY | PAGE_READWRITE)
++                    || info.AllocationProtect == PAGE_WRITECOPY { return false; }
++                let next = (info.BaseAddress as usize).saturating_add(info.RegionSize).min(end);
++                if next <= cursor { return false; }
++                cursor = next;
++            }
++            true
++        })
++    }
++
++    // These read live foreign memory without constructing Rust references into memory a title
++    // thread may concurrently update. The GPU caller owns the host destination for the copy.
++    unsafe extern "C" {
++        fn memcpy(dst: *mut c_void, src: *const c_void, len: usize) -> *mut c_void;
++    }
++
++    // Cache-line equality, unaligned native words, no probabilistic fingerprint and no
++    // Rust references to mutable title mappings. Every caller supplies whole 64-byte lines.
++    unsafe fn equal(a: *const u8,b: *const u8,len:usize) -> bool {
++        for i in (0..len).step_by(64) {
++            let mut bits=0u128;
++            for lane in [0,16,32,48] {
++                unsafe { bits |= a.add(i+lane).cast::<u128>().read_unaligned() ^ b.add(i+lane).cast::<u128>().read_unaligned(); }
++            }
++            if bits != 0 { return false; }
++        }
++        true
++    }
++
++    /// Success after refreshing every byte, or None: redo the whole range with checked reads.
++    pub(super) unsafe fn refresh(at: usize, dst: *mut u8, len: usize) -> Option<usize> {
++        if len == 0 || !at.is_multiple_of(PAGE) || !len.is_multiple_of(PAGE) { return None; }
++        let layout = layout(at,at.checked_add(len)?)?;
++        if !readable(&layout) { return None; }
++        let mut offset = 0;
++        let mut spans = Vec::with_capacity(len / (4<<20) + layout.runs.len());
++        for run in &layout.runs {
++            for i in (0..run.len).step_by(4 << 20) {
++                spans.push((run.address + i, dst as usize + offset + i, (run.len-i).min(4<<20)));
++            }
++            offset += run.len;
++        }
++        let written = victory_gpu::compare_managed_spans(&spans, |&(src,dst,size)| {
++            let mut written = 0;
++            for i in (0..size).step_by(PAGE) {
++                let a = (src+i) as *const u8;
++                let b = (dst+i) as *mut u8;
++                // SAFETY: source mappings stay pinned in layout until all workers are joined;
++                // disjoint chunks in the currently idle host buffer have a single writer.
++                unsafe {
++                    if equal(a,b,PAGE) { continue; }
++                    for k in (0..PAGE).step_by(4096) {
++                        if !equal(a.add(k),b.add(k),4096) {
++                            memcpy(b.add(k).cast(),a.add(k).cast(),4096);
++                            written += 4096;
++                        }
++                    }
++                }
++            }
++            written
++        });
++        #[cfg(test)]
++        if let Some(change_mapping) = AFTER_COPY.lock().unwrap().take() {
++            change_mapping();
++        }
++        // A known identity change during comparison demands a complete retry, even if some
++        // changed pages had already reached dst. All title reads that fail use the old path.
++        if !CURRENT.read().unwrap_or_else(|p| p.into_inner()).as_ref().is_some_and(|old| Arc::ptr_eq(old,&layout))
++            || !readable(&layout) { return None; }
++        Some(written)
++    }
++}
++
+ pub(crate) fn module() -> HleModule {
++    #[cfg(feature="diagnostics")]
++    if on_wine() && std::env::var("VICTORY_XMEM_VIEW_READ").as_deref() == Ok("1") {
++        let _ = victory_gpu::XMEM_VIEW_REFRESH.set(hot_view::refresh);
++    }
+     HleModule {
+         name: "xmem",
+         dlls: &["xmem.dll"],
+@@ -1367,4 +1546,96 @@
+         assert_eq!(XMemFreePhysicalPages(3, a.as_ptr()), 1);
+         assert_eq!(XMemFreePhysicalPages(1, b.as_ptr()), 1);
+     }
+-}
++    #[cfg(feature="diagnostics")]
++    #[test]
++    fn managed_read_view_follows_alias_and_checks_visibility_and_revision() {
++        use windows_sys::Win32::System::Memory::{PAGE_NOACCESS, VirtualProtect};
++        let _ = victory_gpu::XMEM_VIEW_REFRESH.set(hot_view::refresh);
++        let p = allocate(4);
++        let reserve = || XMemVirtualAlloc(std::ptr::null_mut(), 3*PAGE, MEM_RESERVE|PAGES_64K,0,PAGE_READWRITE);
++        let (a,b) = (reserve(),reserve());
++        let at = |i| a.wrapping_byte_add(i*PAGE);
++        assert!(!a.is_null() && !b.is_null());
++        assert_eq!(XMemMapPhysicalPages(a,1,p[3..].as_ptr()),a);
++        assert_eq!(XMemMapPhysicalPages(at(1),1,p.as_ptr()),at(1));
++        assert_eq!(XMemMapPhysicalPages(at(2),1,p[1..].as_ptr()),at(2));
++        assert_eq!(XMemMapPhysicalPages(b,1,p[3..].as_ptr()),b);
++        let mut dst=vec![0xccu8;3*PAGE];
++        let read = |dst:&mut [u8]| unsafe { hot_view::refresh(a as usize,dst.as_mut_ptr(),dst.len()) };
++        assert_eq!(read(&mut dst),Some(3*PAGE));
++        assert_eq!(read(&mut dst),Some(0));
++        unsafe { b.cast::<u8>().add(4086).write(29); }
++        assert_eq!(read(&mut dst),Some(4096));
++        assert_eq!(dst[4086],29);
++        dst[2*PAGE+56]=17;
++        assert_eq!(read(&mut dst),Some(4096));
++        assert_eq!(dst[2*PAGE+56],0);
++        let mut old=0;
++        assert_ne!(unsafe {VirtualProtect(at(1),4096,PAGE_NOACCESS,&mut old)},0);
++        assert_eq!(read(&mut dst),None);
++        assert_ne!(unsafe {VirtualProtect(at(1),4096,PAGE_READWRITE,&mut old)},0);
++        assert_eq!(read(&mut dst),Some(0));
++        assert_eq!(XMemMapPhysicalPages(a,1,std::ptr::null()),a);
++        assert_eq!(read(&mut dst),None);
++        assert_eq!(XMemMapPhysicalPages(a,1,p[2..].as_ptr()),a);
++        assert_eq!(read(&mut dst),Some(4096));
++        assert_eq!(dst[4086],0);
++        // Simulate a remap after copying but before committing the answer. The old
++        // mapping stays alive, and the completed copy must be rejected by identity.
++        let (base,next_page) = (a as usize, p[3]);
++        *hot_view::AFTER_COPY.lock().unwrap()=Some(Box::new(move || {
++            let a=base as *mut c_void;
++            assert_eq!(XMemMapPhysicalPages(a,1,&next_page),a);
++        }));
++        assert_eq!(read(&mut dst),None);
++        assert_eq!(read(&mut dst),Some(4096));
++        assert_eq!(dst[4086],29);
++        assert_eq!(XMemFreePhysicalPages(p.len(),p.as_ptr()),1);
++        assert_eq!(read(&mut dst),Some(0));
++        assert_eq!(XMemMapPhysicalPages(a,3,std::ptr::null()),a);
++        assert_eq!(XMemMapPhysicalPages(b,1,std::ptr::null()),b);
++        assert_eq!(read(&mut dst),None);
++    }
++
++    #[cfg(feature="diagnostics")]
++    #[test]
++    #[ignore]
++    fn managed_view_read_benchmark() {
++        use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
++        use std::time::Instant;
++        const N:usize=174<<20;
++        let pages=allocate(N/PAGE);
++        let a=XMemVirtualAlloc(std::ptr::null_mut(), N, MEM_RESERVE|PAGES_64K,0,PAGE_READWRITE);
++        assert!(!a.is_null());
++        let k=27*1024*1024/PAGE;
++        assert_eq!(XMemMapPhysicalPages(a,k,pages[pages.len()-k..].as_ptr()),a);
++        for (start,number,index) in [(k,1024,0),(k+1024,pages.len()-k-1024,1024)] {
++            let at=a.wrapping_byte_add(start*PAGE);
++            assert_eq!(XMemMapPhysicalPages(at,number,pages[index..].as_ptr()),at);
++        }
++        let mut out=vec![0xc7u8;N]; let mut reference=vec![0x88u8;N];
++        unsafe { std::ptr::write_bytes(a,0x25,N); }
++        let old=|dst:&mut [u8]| {
++            let mut done=0;
++            assert_ne!(unsafe{ReadProcessMemory(GetCurrentProcess(),a,dst.as_mut_ptr().cast(),dst.len(),&mut done)},0);
++            assert_eq!(done,N);
++        };
++        let times=|v:&[u64]| { let mut v=v.to_vec(); v.sort_unstable(); (v[15],v[30]) };
++        let (mut baseline,mut exact)=(Vec::new(),Vec::new());
++        for i in 0..36 {
++            let touch = i%4==2;
++            if touch { unsafe { a.cast::<u8>().add((i*997)*4096%N).write(i as u8); } }
++            let mut run=|view| {
++                let start=Instant::now();
++                if view {
++                    let written=unsafe { hot_view::refresh(a as usize,out.as_mut_ptr(),N) }.unwrap();
++                    let us=start.elapsed().as_micros() as u64;
++                    if i>=4 { exact.push(us); assert_eq!(written,if touch {4096}else{0}); }
++                } else { old(&mut reference); let us=start.elapsed().as_micros() as u64; if i>=4 {baseline.push(us);} }
++            };
++            run(i%2==0); run(i%2!=0);
++            assert!(out==reference);
++        }
++        eprintln!("174MiB, 3 title VA views, 2 physical runs, 32 paired alternating samples, 25% of calls modify one 4KiB block; all outputs compared: RPM p50/p95 {:?} us, managed compare p50/p95 {:?} us",times(&baseline),times(&exact));
++    }
++}

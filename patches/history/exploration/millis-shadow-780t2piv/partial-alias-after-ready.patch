@@ -1,0 +1,123 @@
+--- a/crates/victory-gpu/src/shadow.rs
++++ b/crates/victory-gpu/src/shadow.rs
+@@ -374,11 +374,11 @@
+         let mut written = 0;
+         let (from, to) = self.inside(address, len);
+         let start = self.start as usize;
+-        if let Some((taken, before)) = segments.iter().find(|(at, bytes)| *at <= from && to <= at + bytes.len())
++        if let Some((taken, before)) = segments.iter_mut().find(|(at, bytes)| *at <= from && to <= at + bytes.len())
+             && back
+             && from < to
+         {
+-            let before = &before[from - taken..to - taken];
++            let before = &mut before[from - *taken..to - *taken];
+             #[cfg(feature = "diagnostics")]
+             let _timed = crate::watch::Timed(std::time::Instant::now(), crate::copystat::C::CompareUs);
+             // By 64 KiB piece: the copy compared with its bytes before the
+@@ -392,11 +392,16 @@
+                 // SAFETY: inside the mapping; only the submitting thread
+                 // writes it.
+                 let host = unsafe { std::slice::from_raw_parts_mut(self.data.add(at), n) };
+-                let old = &before[at - from..at - from + n];
++                let old = &mut before[at - from..at - from + n];
+                 // A whole piece is compared once per submission, whichever
+                 // declared ranges overlap it: then what the GPU wrote there
+                 // went back.
+-                if n == PIECE && !compared.insert(start + at) {
++                let already_compared = if n == PIECE {
++                    !compared.insert(start + at)
++                } else {
++                    compared.contains(&((start + at) & !(PIECE - 1)))
++                };
++                if already_compared {
+                     at += n;
+                     continue;
+                 }
+@@ -405,6 +410,11 @@
+                 if !crate::host::same_bytes(host, old) {
+                     let title = &mut scratch.get_or_insert_with(|| vec![0u8; PIECE])[..n];
+                     if !crate::host::read_into((start + at) as *const u8, title) {
++                        // A readable subset of this page can still be returned
++                        // by a later partial declaration.
++                        if n == PIECE {
++                            compared.remove(&(start + at));
++                        }
+                         at += n;
+                         continue;
+                     }
+@@ -414,6 +424,14 @@
+                         let _writing = crate::watch::writing(start + at, n);
+                         crate::host::write_mapped((start + at) as *mut u8, title.as_ptr(), n);
+                         written += n;
++                    }
++                    if n < PIECE {
++                        // A later declaration can overlap just part of this
++                        // piece. Its host bytes now include title writes and
++                        // GPU changes already returned. Comparing against the
++                        // original snapshot again would replay those writes
++                        // over newer changes made through any title alias.
++                        old.copy_from_slice(host);
+                     }
+                     synced.push((start + at) / PAGE);
+                 }
+@@ -1181,6 +1199,60 @@
+     }
+ 
+     #[test]
++    fn a_failed_whole_page_does_not_hide_a_readable_overlap() {
++        use windows_sys::Win32::System::Memory::{PAGE_NOACCESS, VirtualProtect};
++        let p = crate::watch::tests::pool(1);
++        register(p, p as u64, PAGE as u64);
++        let copy = find(p as u64, PAGE as u64).expect("test requires a host GPU");
++        copy.update(p, PAGE);
++        copy.snapshot_writes(&mut vec![(p, p + PAGE), (p, p + 64)]);
++        copy.write_host((p + 3) as u64, &[17]);
++        let mut old = 0;
++        // SAFETY: within our page-aligned allocation, and protection is restored below.
++        unsafe { assert_ne!(VirtualProtect((p + 8192) as *mut _, 4096, PAGE_NOACCESS, &mut old), 0) };
++        assert_eq!(copy.copy_back(p, PAGE), 0);
++        assert_eq!(copy.copy_back(p, 64), 64);
++        assert_eq!(unsafe { ((p + 3) as *const u8).read_volatile() }, 17);
++        unsafe { assert_ne!(VirtualProtect((p + 8192) as *mut _, 4096, old, &mut old), 0) };
++        drop(copy);
++        unregister(p, p as u64);
++        crate::watch::tests::free(p);
++    }
++
++    #[test]
++    fn overlapping_copybacks_preserve_later_title_writes_through_an_alias() {
++        let (p, alias) = crate::watch::tests::twin_views(1);
++        register(p, p as u64, PAGE as u64);
++        let copy = find(p as u64, PAGE as u64).expect("test requires a host GPU");
++        for (first, second) in [
++            ((p + 16, p + 64), (p + 20, p + 96)),
++            ((p + 16, p + 64), (p, p + PAGE)),
++            ((p, p + PAGE), (p + 20, p + 96)),
++        ] {
++            // SAFETY: each address is in the test's second live mapping.
++            let write = |at, value| unsafe { ((alias + at) as *mut u8).write_volatile(value) };
++            let read = |at| unsafe { ((alias + at) as *const u8).read_volatile() };
++            for at in [21usize, 23, 84] {
++                write(at, 0);
++            }
++            copy.update(p, PAGE);
++            copy.snapshot_writes(&mut vec![first, second]);
++            copy.write_host((p + 21) as u64, &[7]);
++            copy.write_host((p + 84) as u64, &[9]);
++            write(23, 1);
++            copy.copy_back(first.0, first.1 - first.0);
++            assert_eq!((read(21usize), read(23)), (7, 1));
++            // Both a previously GPU-written byte and an unrelated CPU byte
++            // acquire newer values after the first, overlapping return.
++            write(21, 0x43);
++            write(23, 0x44);
++            copy.copy_back(second.0, second.1 - second.0);
++            assert_eq!((read(21usize), read(23), read(84)), (0x43, 0x44, 9));
++        }
++        unregister(p, p as u64);
++    }
++
++    #[test]
+     fn batched_snapshots_keep_partial_alias_writes_and_exact_gaps() {
+         let (p, second) = crate::watch::tests::twin_views(2);
+         let len = 2 * PAGE;

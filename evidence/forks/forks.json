@@ -1,0 +1,38 @@
+[
+  {
+    "local": "SPIRV-Cross",
+    "fork": "https://github.com/AEMONET-Dev/SPIRV-Cross",
+    "upstream": "https://github.com/KhronosGroup/SPIRV-Cross",
+    "commit": "57e4efcc84112abcd426dc5ec248b5339bee04f2"
+  },
+  {
+    "local": "VIctory-macOS",
+    "fork": "https://github.com/AEMONET-Dev/VIctory-macOS",
+    "upstream": "https://github.com/pragyaangaur/VIctory-macOS",
+    "commit": "c78cfdc462696d448c4b5b2271e653ea3dff41c6"
+  },
+  {
+    "local": "dxil-spirv",
+    "fork": "https://github.com/AEMONET-Dev/dxil-spirv",
+    "upstream": "https://github.com/HansKristian-Work/dxil-spirv",
+    "commit": "694cc674380a47767b56d63b9dec196aec963115"
+  },
+  {
+    "local": "mullion",
+    "fork": "https://github.com/AEMONET-Dev/mullion",
+    "upstream": "https://github.com/dttdrv/mullion",
+    "commit": "11e77a859d7c0e11aac75bb798585a1db2e9a96d"
+  },
+  {
+    "local": "victory-perf",
+    "fork": "https://github.com/AEMONET-Dev/victory-perf",
+    "upstream": "https://github.com/vitutu1/victory-perf",
+    "commit": "97c3aa24263b90fa6691fca8ca88fca179593a19"
+  },
+  {
+    "local": "xenia-edge",
+    "fork": "https://github.com/AEMONET-Dev/xenia-edge",
+    "upstream": "https://github.com/has207/xenia-edge",
+    "commit": "0b12401d84bfd59598f2062d9aa25e24e5d6284c"
+  }
+]

@@ -1,0 +1,53 @@
+From 8e1b338cb0dd8dec396717519c1be6ef41078f8e Mon Sep 17 00:00:00 2001
+From: AEMONET-Dev <267029939+AEMONET-Dev@users.noreply.github.com>
+Date: Wed, 25 Nov 2026 21:53:23 -0500
+Subject: [PATCH] shader: exclude system values from coalesce_generic_rows
+
+In pixel shaders, system values like SV_IsFrontFace (kind != 0) can share
+a hardware register row with a generic element (e.g. TEXCOORD2 on reg 7).
+Grouping system values into by_row prevented the pixel shader from
+coalescing that row to VREG<row> while the mesh shader did, causing
+user(texcoord2) fragment input mismatches.
+
+Verified on M5 Max warm cache (2,003 shaders): Fragment input mismatches
+dropped to 0 (XPC errors 0, total [ERROR] 5).
+---
+ crates/victory-shader/src/emit/mod.rs | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
+index e76e858..402e48d 100644
+--- a/crates/victory-shader/src/emit/mod.rs
++++ b/crates/victory-shader/src/emit/mod.rs
+@@ -411,12 +411,16 @@ pub fn pack_mesh_outputs_enabled() -> bool {
+ 
+ fn coalesce_generic_rows(elements: &mut Vec<container::SigElement>) {
+     use std::collections::BTreeMap;
+-    // Group indices by hardware register row for eligible generic f32 rows.
++    // Group indices by hardware register row for eligible generic (`kind == 0`)
++    // f32 rows. Excluding system values (`kind != 0`, e.g. `SV_IsFrontFace` on
++    // a pixel input row) ensures mesh and pixel stages agree on `VREG<row>`.
+     // Restrict to `comp == 9` (f32) so integer semantics (e.g. `COLOR0` u32)
+     // keep their original names and never mismatch across stages.
+     let mut by_row: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+     for (idx, e) in elements.iter().enumerate() {
+-        if let Some(r) = e.row {
++        if e.kind == 0
++            && let Some(r) = e.row
++        {
+             by_row.entry(r).or_default().push(idx);
+         }
+     }
+@@ -465,7 +469,8 @@ fn coalesce_generic_rows(elements: &mut Vec<container::SigElement>) {
+     let mut out = Vec::with_capacity(elements.len());
+     let mut emitted = std::collections::HashSet::new();
+     for e in elements.drain(..) {
+-        if let Some(r) = e.row
++        if e.kind == 0
++            && let Some(r) = e.row
+             && let Some(merged) = coalesced.get(&r)
+         {
+             if emitted.insert(r) {
+-- 
+2.56.0
+

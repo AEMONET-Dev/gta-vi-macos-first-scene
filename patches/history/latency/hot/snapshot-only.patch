@@ -1,0 +1,115 @@
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -2040,8 +2040,16 @@
+         // after an earlier write declaration used to patch its snapshot here.
+         #[cfg(feature = "diagnostics")]
+         let _timed = crate::watch::Timed(std::time::Instant::now(), crate::copystat::C::StepGpuWriteUs);
+-        for (shadow, address, len) in self.snapshots {
+-            shadow.writing(address, len, false);
++        static MERGE: OnceLock<bool> = OnceLock::new();
++        if *MERGE.get_or_init(|| crate::switch::on("VICTORY_MERGE_WRITE_SNAPSHOTS")) {
++            self.snapshots.sort_unstable_by_key(|(s, at, _)| (std::sync::Arc::as_ptr(s), *at));
++            for group in self.snapshots.chunk_by(|a, b| std::sync::Arc::ptr_eq(&a.0, &b.0)) {
++                group[0].0.snapshot_declarations(group.iter().map(|(_, at, n)| (*at, *n)));
++            }
++        } else {
++            for (shadow, address, len) in self.snapshots {
++                shadow.writing(address, len, false);
++            }
+         }
+     }
+ 
+@@ -2200,7 +2208,15 @@
+     let page_end = (at | 0xfff).saturating_add(1).min(end);
+     // SAFETY: a valid out pointer of the right size, filled by VirtualQuery.
+     let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+-    if unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) } == 0 {
++    #[cfg(feature = "diagnostics")]
++    let started = Instant::now();
++    let queried = unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) };
++    #[cfg(feature = "diagnostics")]
++    {
++        crate::copystat::add(crate::copystat::C::Queries, 1);
++        crate::copystat::add(crate::copystat::C::QueryUs, started.elapsed().as_micros() as u64);
++    }
++    if queried == 0 {
+         return (page_end, true);
+     }
+     let limit = (info.BaseAddress as usize).saturating_add(info.RegionSize);
+--- a/crates/victory-gpu/src/shadow.rs
++++ b/crates/victory-gpu/src/shadow.rs
+@@ -281,6 +281,35 @@
+             t.arm(address, address + len);
+             return;
+         }
++        self.snapshot(address, len);
++    }
++
++    /// Capture the final host values once for the union of sorted declarations.
++    /// Keep the original keys because command lists release those exact ranges.
++    pub(crate) fn snapshot_declarations(
++        &self,
++        ranges: impl Iterator<Item = (usize, usize)> + Clone,
++    ) {
++        self.pending
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .extend(ranges.clone().map(|(at, len)| (at, at + len)));
++        let mut spans = ranges.filter(|&(_, len)| len != 0);
++        let Some((mut start, len)) = spans.next() else { return };
++        let mut end = start + len;
++        for (at, len) in spans {
++            if at > end {
++                self.snapshot(start, end - start);
++                start = at;
++                end = at + len;
++            } else {
++                end = end.max(at + len);
++            }
++        }
++        self.snapshot(start, end - start);
++    }
++
++    fn snapshot(&self, address: usize, len: usize) {
+         let (from, to) = self.inside(address, len);
+         if from >= to {
+             return;
+@@ -1139,6 +1168,38 @@
+         unregister(p, p as u64);
+     }
+ 
++    #[test]
++    fn merged_declarations_preserve_gaps_and_original_release_keys() {
++        let p = crate::watch::tests::pool(2);
++        register(p, p as u64, (2 * PAGE) as u64);
++        let Some(shadow) = find(p as u64, (2 * PAGE) as u64) else {
++            unregister(p, p as u64);
++            return;
++        };
++        shadow.update(p, 2 * PAGE);
++        let spans = [(p, 32), (p + 16, 32), (p + 48, 8), (p + 60, 0), (p + PAGE, 12)];
++        shadow.snapshot_declarations(spans.into_iter());
++        {
++            let before = shadow.before.lock().unwrap();
++            let segments: Vec<_> = before.0.iter().map(|(at, v)| (*at, v.len())).collect();
++            assert_eq!(segments, [(0, 56), (PAGE, 12)]);
++        }
++        assert_eq!(shadow.pending.lock().unwrap().len(), spans.len());
++        shadow.write_host((p + 20) as u64, &[0xa3]);
++        shadow.write_host((p + PAGE + 2) as u64, &[0xba]);
++        for &(at, len) in spans.iter().rev() {
++            shadow.copy_back(at, len);
++        }
++        // SAFETY: this test owns both committed pages.
++        unsafe {
++            assert_eq!(*((p + 20) as *const u8), 0xa3);
++            assert_eq!(*((p + PAGE + 2) as *const u8), 0xba);
++        }
++        assert!(shadow.pending.lock().unwrap().is_empty());
++        assert!(shadow.before.lock().unwrap().0.is_empty());
++        unregister(p, p as u64);
++    }
++
+     /// Pages shaders marked (`copy_back_marks`, `victory_shader::emit`
+     /// "Write marks") go back by the bytes the GPU changed. The title writes
+     /// a marked page after the copy took it (the guard saves its bytes from

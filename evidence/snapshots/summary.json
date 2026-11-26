@@ -1,0 +1,505 @@
+{
+  "size_bytes": 1048576,
+  "page_bytes": 16384,
+  "platform": "device=Apple M5 Max unified=1",
+  "post_capture_writers": {
+    "clonefile": {
+      "count": 10,
+      "frozen": 10,
+      "aliases_coherent": 10,
+      "median_setup_us": 357.35400000000004
+    },
+    "private": {
+      "count": 10,
+      "frozen": 10,
+      "aliases_coherent": 10,
+      "median_setup_us": 26.2915
+    },
+    "remap": {
+      "count": 10,
+      "frozen": 10,
+      "aliases_coherent": 10,
+      "median_setup_us": 27.6035
+    },
+    "vmcopy": {
+      "count": 10,
+      "frozen": 10,
+      "aliases_coherent": 10,
+      "median_setup_us": 26.625
+    }
+  },
+  "unfaulted_pwrite_msync": {
+    "clonefile": {
+      "count": 10,
+      "frozen": 10,
+      "aliases_coherent": 10,
+      "median_setup_us": 674.646
+    },
+    "private": {
+      "count": 10,
+      "frozen": 10,
+      "aliases_coherent": 10,
+      "median_setup_us": 26.625
+    },
+    "remap": {
+      "count": 10,
+      "frozen": 10,
+      "aliases_coherent": 10,
+      "median_setup_us": 25.292
+    },
+    "shared_control": {
+      "count": 10,
+      "frozen": 0,
+      "aliases_coherent": 10,
+      "median_setup_us": 9.4375
+    },
+    "vmcopy": {
+      "count": 10,
+      "frozen": 10,
+      "aliases_coherent": 10,
+      "median_setup_us": 22.167
+    }
+  },
+  "concurrent_capture": {
+    "clonefile": {
+      "count": 10,
+      "inside_call": 10,
+      "torn": 4,
+      "changed_afterwards": 0,
+      "writer_progressed_during_capture": 10,
+      "median_setup_us": 616.0205
+    },
+    "private": {
+      "count": 10,
+      "inside_call": 10,
+      "torn": 0,
+      "changed_afterwards": 0,
+      "writer_progressed_during_capture": 10,
+      "median_setup_us": 42.5205
+    },
+    "remap": {
+      "count": 10,
+      "inside_call": 10,
+      "torn": 0,
+      "changed_afterwards": 0,
+      "writer_progressed_during_capture": 9,
+      "median_setup_us": 43.688
+    },
+    "shared_control": {
+      "count": 10,
+      "inside_call": 0,
+      "torn": 10,
+      "changed_afterwards": 10,
+      "writer_progressed_during_capture": 10,
+      "median_setup_us": 4.312
+    },
+    "torn_control": {
+      "count": 10,
+      "inside_call": 10,
+      "torn": 10,
+      "changed_afterwards": 0,
+      "writer_progressed_during_capture": 10,
+      "median_setup_us": 164.35399999999998
+    },
+    "vmcopy": {
+      "count": 10,
+      "inside_call": 10,
+      "torn": 0,
+      "changed_afterwards": 0,
+      "writer_progressed_during_capture": 10,
+      "median_setup_us": 45.0415
+    }
+  },
+  "same_file_fragments": {
+    "clonefile": {
+      "count": 10,
+      "inside_call": 10,
+      "torn": 6,
+      "changed_afterwards": 0,
+      "writer_progressed_during_capture": 10,
+      "median_setup_us": 504.04200000000003
+    },
+    "private": {
+      "count": 10,
+      "inside_call": 10,
+      "torn": 0,
+      "changed_afterwards": 0,
+      "writer_progressed_during_capture": 8,
+      "median_setup_us": 35.437
+    },
+    "remap": {
+      "count": 10,
+      "inside_call": 10,
+      "torn": 0,
+      "changed_afterwards": 0,
+      "writer_progressed_during_capture": 10,
+      "median_setup_us": 35.75
+    },
+    "shared_control": {
+      "count": 10,
+      "inside_call": 0,
+      "torn": 10,
+      "changed_afterwards": 10,
+      "writer_progressed_during_capture": 10,
+      "median_setup_us": 4.8545
+    },
+    "torn_control": {
+      "count": 10,
+      "inside_call": 10,
+      "torn": 10,
+      "changed_afterwards": 0,
+      "writer_progressed_during_capture": 10,
+      "median_setup_us": 155.54149999999998
+    },
+    "vmcopy": {
+      "count": 10,
+      "inside_call": 10,
+      "torn": 0,
+      "changed_afterwards": 0,
+      "writer_progressed_during_capture": 10,
+      "median_setup_us": 32.354
+    }
+  },
+  "metal_cpu_writers": [
+    {
+      "method": "remap",
+      "source_previously_gpu_read": "0",
+      "wrap_before_writes": "0",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "-1",
+      "snapshot_us": "29.583",
+      "wrap_us": "8.125"
+    },
+    {
+      "method": "remap",
+      "source_previously_gpu_read": "0",
+      "wrap_before_writes": "1",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "-1",
+      "snapshot_us": "26.000",
+      "wrap_us": "18.125"
+    },
+    {
+      "method": "remap",
+      "source_previously_gpu_read": "1",
+      "wrap_before_writes": "0",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "1",
+      "snapshot_us": "55.125",
+      "wrap_us": "9.250"
+    },
+    {
+      "method": "remap",
+      "source_previously_gpu_read": "1",
+      "wrap_before_writes": "1",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "1",
+      "snapshot_us": "93.875",
+      "wrap_us": "15.125"
+    },
+    {
+      "method": "private",
+      "source_previously_gpu_read": "0",
+      "wrap_before_writes": "0",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "-1",
+      "snapshot_us": "33.000",
+      "wrap_us": "20.834"
+    },
+    {
+      "method": "private",
+      "source_previously_gpu_read": "0",
+      "wrap_before_writes": "1",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "-1",
+      "snapshot_us": "33.042",
+      "wrap_us": "22.291"
+    },
+    {
+      "method": "private",
+      "source_previously_gpu_read": "1",
+      "wrap_before_writes": "0",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "1",
+      "snapshot_us": "71.208",
+      "wrap_us": "22.500"
+    },
+    {
+      "method": "private",
+      "source_previously_gpu_read": "1",
+      "wrap_before_writes": "1",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "1",
+      "snapshot_us": "63.000",
+      "wrap_us": "11.250"
+    }
+  ],
+  "metal_gpu_writer": [
+    {
+      "method": "remap",
+      "source_previously_gpu_read": "1",
+      "wrap_before_writes": "0",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "1",
+      "snapshot_us": "42.250",
+      "wrap_us": "13.167"
+    },
+    {
+      "method": "remap",
+      "source_previously_gpu_read": "1",
+      "wrap_before_writes": "1",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "1",
+      "snapshot_us": "43.250",
+      "wrap_us": "10.834"
+    },
+    {
+      "method": "private",
+      "source_previously_gpu_read": "1",
+      "wrap_before_writes": "0",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "1",
+      "snapshot_us": "40.583",
+      "wrap_us": "7.458"
+    },
+    {
+      "method": "private",
+      "source_previously_gpu_read": "1",
+      "wrap_before_writes": "1",
+      "cpu_snapshot": "1",
+      "gpu_snapshot": "1",
+      "identical_pointer": "1",
+      "source_alias": "1",
+      "source_gpu": "1",
+      "snapshot_us": "34.041",
+      "wrap_us": "5.792"
+    }
+  ],
+  "one_and_four_mib_single_sample_cost": [
+    {
+      "method": "2",
+      "bytes": "1048576",
+      "dirty": "0",
+      "setup_us": "1.750",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "0",
+      "shared_now_private": "0",
+      "dirty_pages": "0",
+      "shadow_depth": "0",
+      "share_mode": "4",
+      "first_byte": "150"
+    },
+    {
+      "method": "0",
+      "bytes": "1048576",
+      "dirty": "0",
+      "setup_us": "3.000",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "0",
+      "shared_now_private": "0",
+      "dirty_pages": "0",
+      "shadow_depth": "1",
+      "share_mode": "1",
+      "first_byte": "0"
+    },
+    {
+      "method": "1",
+      "bytes": "1048576",
+      "dirty": "0",
+      "setup_us": "2.042",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "0",
+      "shared_now_private": "0",
+      "dirty_pages": "0",
+      "shadow_depth": "1",
+      "share_mode": "1",
+      "first_byte": "0"
+    },
+    {
+      "method": "2",
+      "bytes": "4194304",
+      "dirty": "0",
+      "setup_us": "1.875",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "0",
+      "shared_now_private": "0",
+      "dirty_pages": "0",
+      "shadow_depth": "0",
+      "share_mode": "4",
+      "first_byte": "150"
+    },
+    {
+      "method": "0",
+      "bytes": "4194304",
+      "dirty": "0",
+      "setup_us": "2.834",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "0",
+      "shared_now_private": "0",
+      "dirty_pages": "0",
+      "shadow_depth": "1",
+      "share_mode": "1",
+      "first_byte": "0"
+    },
+    {
+      "method": "1",
+      "bytes": "4194304",
+      "dirty": "0",
+      "setup_us": "1.667",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "0",
+      "shared_now_private": "0",
+      "dirty_pages": "0",
+      "shadow_depth": "1",
+      "share_mode": "1",
+      "first_byte": "0"
+    },
+    {
+      "method": "2",
+      "bytes": "1048576",
+      "dirty": "1",
+      "setup_us": "2.291",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "64",
+      "shared_now_private": "0",
+      "dirty_pages": "64",
+      "shadow_depth": "0",
+      "share_mode": "4",
+      "first_byte": "150"
+    },
+    {
+      "method": "0",
+      "bytes": "1048576",
+      "dirty": "1",
+      "setup_us": "25.000",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "64",
+      "shared_now_private": "0",
+      "dirty_pages": "64",
+      "shadow_depth": "1",
+      "share_mode": "1",
+      "first_byte": "164"
+    },
+    {
+      "method": "1",
+      "bytes": "1048576",
+      "dirty": "1",
+      "setup_us": "29.834",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "64",
+      "shared_now_private": "0",
+      "dirty_pages": "64",
+      "shadow_depth": "1",
+      "share_mode": "1",
+      "first_byte": "164"
+    },
+    {
+      "method": "2",
+      "bytes": "4194304",
+      "dirty": "1",
+      "setup_us": "1.834",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "256",
+      "shared_now_private": "0",
+      "dirty_pages": "256",
+      "shadow_depth": "0",
+      "share_mode": "4",
+      "first_byte": "150"
+    },
+    {
+      "method": "0",
+      "bytes": "4194304",
+      "dirty": "1",
+      "setup_us": "75.375",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "256",
+      "shared_now_private": "0",
+      "dirty_pages": "256",
+      "shadow_depth": "1",
+      "share_mode": "1",
+      "first_byte": "164"
+    },
+    {
+      "method": "1",
+      "bytes": "4194304",
+      "dirty": "1",
+      "setup_us": "89.292",
+      "footprint_delta": "0",
+      "internal_delta": "0",
+      "external_delta": "0",
+      "footprint_delta_after_single_store": "0",
+      "snapshot_resident_pages": "256",
+      "shared_now_private": "0",
+      "dirty_pages": "256",
+      "shadow_depth": "1",
+      "share_mode": "1",
+      "first_byte": "164"
+    }
+  ]
+}

@@ -1,0 +1,4463 @@
+{
+  "experiment": "schedule",
+  "subject_from_settings_or_cli": null,
+  "hot_calls_by_mode": {
+    "off": {
+      "n": 0,
+      "successes": 0,
+      "attempts": 0,
+      "elapsed_us": null,
+      "attempted_us": null,
+      "stored_bytes": 0,
+      "requested_bytes": 0
+    },
+    "on": {
+      "n": 0,
+      "successes": 0,
+      "attempts": 0,
+      "elapsed_us": null,
+      "attempted_us": null,
+      "stored_bytes": 0,
+      "requested_bytes": 0
+    }
+  },
+  "v2_event_counts": {
+    "fences": 0,
+    "snapshots": 0
+  },
+  "by_applied_snapshot_mode": {},
+  "world_frame": 1683,
+  "policy": "abba",
+  "min_start_offset": 8,
+  "frame_anchor_count": 39,
+  "skipped_anchor_intervals": [],
+  "unparsed_render_messages": {},
+  "hot_events": [],
+  "all_frames": {
+    "n": 38,
+    "wall_ms": {
+      "n": 38,
+      "mean": 2970.958,
+      "p50": 3023.489,
+      "p95": 4568.074
+    },
+    "draws": {
+      "n": 38,
+      "mean": 3685.974,
+      "p50": 3727.5,
+      "p95": 6930
+    },
+    "dispatches": {
+      "n": 38,
+      "mean": 3449.842,
+      "p50": 3082.0,
+      "p95": 6064
+    },
+    "exclusive_ms": {
+      "descriptors": {
+        "n": 38,
+        "mean": 0.175,
+        "p50": 0.116,
+        "p95": 0.296
+      },
+      "texture_heaps": {
+        "n": 38,
+        "mean": 514.321,
+        "p50": 447.408,
+        "p95": 1135.902
+      },
+      "deferred_buffer_batch": {
+        "n": 38,
+        "mean": 1490.524,
+        "p50": 1267.124,
+        "p95": 2849.514
+      },
+      "deferred_other": {
+        "n": 38,
+        "mean": 275.296,
+        "p50": 256.602,
+        "p95": 484.612
+      },
+      "submit_fence": {
+        "n": 38,
+        "mean": 400.383,
+        "p50": 409.042,
+        "p95": 551.176
+      },
+      "after_fence_checks": {
+        "n": 38,
+        "mean": 0.154,
+        "p50": 0.049,
+        "p95": 0.527
+      },
+      "writeback": {
+        "n": 38,
+        "mean": 208.616,
+        "p50": 152.552,
+        "p95": 581.908
+      },
+      "multiple_submission_stages": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "queue_wait_only": {
+        "n": 38,
+        "mean": 0.012,
+        "p50": 0.012,
+        "p95": 0.017
+      },
+      "outside_recorded_submission": {
+        "n": 38,
+        "mean": 81.477,
+        "p50": 39.986,
+        "p95": 151.227
+      }
+    },
+    "nested_ms": {
+      "submission_active": {
+        "n": 38,
+        "mean": 2889.469,
+        "p50": 2935.793,
+        "p95": 4470.979
+      },
+      "queue_wait_union": {
+        "n": 38,
+        "mean": 0.012,
+        "p50": 0.012,
+        "p95": 0.017
+      },
+      "queue_wait_while_active": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "buffer_batch_union": {
+        "n": 38,
+        "mean": 1490.524,
+        "p50": 1267.124,
+        "p95": 2849.514
+      },
+      "buffer_outside_deferred": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "hot_copy_union": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "fence_execute_call": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "fence_signal_call": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "fence_arm_event_call": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "fence_wait_return": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "fence_without_wait_return": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "snapshot_union": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "snapshot_with_declarations": {
+        "n": 38,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      }
+    },
+    "snapshot_declarations": {
+      "n": 38,
+      "mean": 0,
+      "p50": 0.0,
+      "p95": 0
+    },
+    "snapshot_callbacks": {
+      "n": 38,
+      "mean": 0,
+      "p50": 0.0,
+      "p95": 0
+    },
+    "fence_callbacks": {
+      "n": 38,
+      "mean": 0,
+      "p50": 0.0,
+      "p95": 0
+    },
+    "batch_calls_started": {
+      "n": 38,
+      "mean": 40.974,
+      "p50": 42.5,
+      "p95": 46
+    },
+    "hot_calls_started": {
+      "n": 38,
+      "mean": 0,
+      "p50": 0.0,
+      "p95": 0
+    },
+    "hot_worker_ms": {
+      "n": 38,
+      "mean": 0.0,
+      "p50": 0.0,
+      "p95": 0.0
+    },
+    "hot_attempts_started": 0,
+    "hot_successes_started": 0,
+    "hot_stored_bytes_started": 0,
+    "hot_requested_bytes_started": 0
+  },
+  "selected_frames": {
+    "n": 30,
+    "wall_ms": {
+      "n": 30,
+      "mean": 2979.959,
+      "p50": 3030.432,
+      "p95": 4380.181
+    },
+    "draws": {
+      "n": 30,
+      "mean": 3651.1,
+      "p50": 3901.0,
+      "p95": 5774
+    },
+    "dispatches": {
+      "n": 30,
+      "mean": 3704.167,
+      "p50": 3453.0,
+      "p95": 6064
+    },
+    "exclusive_ms": {
+      "descriptors": {
+        "n": 30,
+        "mean": 0.191,
+        "p50": 0.124,
+        "p95": 0.296
+      },
+      "texture_heaps": {
+        "n": 30,
+        "mean": 546.482,
+        "p50": 475.517,
+        "p95": 1135.902
+      },
+      "deferred_buffer_batch": {
+        "n": 30,
+        "mean": 1434.111,
+        "p50": 1267.124,
+        "p95": 2822.985
+      },
+      "deferred_other": {
+        "n": 30,
+        "mean": 286.792,
+        "p50": 278.211,
+        "p95": 484.612
+      },
+      "submit_fence": {
+        "n": 30,
+        "mean": 429.222,
+        "p50": 454.51,
+        "p95": 551.176
+      },
+      "after_fence_checks": {
+        "n": 30,
+        "mean": 0.118,
+        "p50": 0.047,
+        "p95": 0.295
+      },
+      "writeback": {
+        "n": 30,
+        "mean": 226.8,
+        "p50": 157.108,
+        "p95": 581.908
+      },
+      "multiple_submission_stages": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "queue_wait_only": {
+        "n": 30,
+        "mean": 0.011,
+        "p50": 0.012,
+        "p95": 0.016
+      },
+      "outside_recorded_submission": {
+        "n": 30,
+        "mean": 56.231,
+        "p50": 42.276,
+        "p95": 136.999
+      }
+    },
+    "nested_ms": {
+      "submission_active": {
+        "n": 30,
+        "mean": 2923.716,
+        "p50": 2983.913,
+        "p95": 4252.49
+      },
+      "queue_wait_union": {
+        "n": 30,
+        "mean": 0.011,
+        "p50": 0.012,
+        "p95": 0.016
+      },
+      "queue_wait_while_active": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "buffer_batch_union": {
+        "n": 30,
+        "mean": 1434.111,
+        "p50": 1267.124,
+        "p95": 2822.985
+      },
+      "buffer_outside_deferred": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "hot_copy_union": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "fence_execute_call": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "fence_signal_call": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "fence_arm_event_call": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "fence_wait_return": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "fence_without_wait_return": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "snapshot_union": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "snapshot_with_declarations": {
+        "n": 30,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      }
+    },
+    "snapshot_declarations": {
+      "n": 30,
+      "mean": 0,
+      "p50": 0.0,
+      "p95": 0
+    },
+    "snapshot_callbacks": {
+      "n": 30,
+      "mean": 0,
+      "p50": 0.0,
+      "p95": 0
+    },
+    "fence_callbacks": {
+      "n": 30,
+      "mean": 0,
+      "p50": 0.0,
+      "p95": 0
+    },
+    "batch_calls_started": {
+      "n": 30,
+      "mean": 40.833,
+      "p50": 43.0,
+      "p95": 46
+    },
+    "hot_calls_started": {
+      "n": 30,
+      "mean": 0,
+      "p50": 0.0,
+      "p95": 0
+    },
+    "hot_worker_ms": {
+      "n": 30,
+      "mean": 0.0,
+      "p50": 0.0,
+      "p95": 0.0
+    },
+    "hot_attempts_started": 0,
+    "hot_successes_started": 0,
+    "hot_stored_bytes_started": 0,
+    "hot_requested_bytes_started": 0
+  },
+  "by_mode": {
+    "off": {
+      "n": 14,
+      "wall_ms": {
+        "n": 14,
+        "mean": 2721.359,
+        "p50": 2550.432,
+        "p95": 3955.979
+      },
+      "draws": {
+        "n": 14,
+        "mean": 3204.857,
+        "p50": 3720.5,
+        "p95": 5468
+      },
+      "dispatches": {
+        "n": 14,
+        "mean": 3285.286,
+        "p50": 3217.0,
+        "p95": 5924
+      },
+      "exclusive_ms": {
+        "descriptors": {
+          "n": 14,
+          "mean": 0.111,
+          "p50": 0.091,
+          "p95": 0.296
+        },
+        "texture_heaps": {
+          "n": 14,
+          "mean": 483.889,
+          "p50": 452.216,
+          "p95": 1135.902
+        },
+        "deferred_buffer_batch": {
+          "n": 14,
+          "mean": 1290.539,
+          "p50": 1218.659,
+          "p95": 2511.956
+        },
+        "deferred_other": {
+          "n": 14,
+          "mean": 238.706,
+          "p50": 229.049,
+          "p95": 445.158
+        },
+        "submit_fence": {
+          "n": 14,
+          "mean": 472.841,
+          "p50": 483.25,
+          "p95": 614.733
+        },
+        "after_fence_checks": {
+          "n": 14,
+          "mean": 0.139,
+          "p50": 0.168,
+          "p95": 0.305
+        },
+        "writeback": {
+          "n": 14,
+          "mean": 180.526,
+          "p50": 151.648,
+          "p95": 545.835
+        },
+        "multiple_submission_stages": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "queue_wait_only": {
+          "n": 14,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.017
+        },
+        "outside_recorded_submission": {
+          "n": 14,
+          "mean": 54.599,
+          "p50": 42.221,
+          "p95": 151.227
+        }
+      },
+      "nested_ms": {
+        "submission_active": {
+          "n": 14,
+          "mean": 2666.749,
+          "p50": 2510.746,
+          "p95": 3823.965
+        },
+        "queue_wait_union": {
+          "n": 14,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.017
+        },
+        "queue_wait_while_active": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "buffer_batch_union": {
+          "n": 14,
+          "mean": 1290.539,
+          "p50": 1218.659,
+          "p95": 2511.956
+        },
+        "buffer_outside_deferred": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "hot_copy_union": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_execute_call": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_signal_call": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_arm_event_call": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_wait_return": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_without_wait_return": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "snapshot_union": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "snapshot_with_declarations": {
+          "n": 14,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        }
+      },
+      "snapshot_declarations": {
+        "n": 14,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "snapshot_callbacks": {
+        "n": 14,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "fence_callbacks": {
+        "n": 14,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "batch_calls_started": {
+        "n": 14,
+        "mean": 39.429,
+        "p50": 43.5,
+        "p95": 47
+      },
+      "hot_calls_started": {
+        "n": 14,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "hot_worker_ms": {
+        "n": 14,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0
+    },
+    "on": {
+      "n": 16,
+      "wall_ms": {
+        "n": 16,
+        "mean": 3206.233,
+        "p50": 3152.863,
+        "p95": 4499.186
+      },
+      "draws": {
+        "n": 16,
+        "mean": 4041.562,
+        "p50": 4324.5,
+        "p95": 6930
+      },
+      "dispatches": {
+        "n": 16,
+        "mean": 4070.688,
+        "p50": 3985.0,
+        "p95": 7808
+      },
+      "exclusive_ms": {
+        "descriptors": {
+          "n": 16,
+          "mean": 0.261,
+          "p50": 0.145,
+          "p95": 2.052
+        },
+        "texture_heaps": {
+          "n": 16,
+          "mean": 601.25,
+          "p50": 563.863,
+          "p95": 1247.825
+        },
+        "deferred_buffer_batch": {
+          "n": 16,
+          "mean": 1559.737,
+          "p50": 1387.742,
+          "p95": 2849.514
+        },
+        "deferred_other": {
+          "n": 16,
+          "mean": 328.868,
+          "p50": 322.643,
+          "p95": 594.342
+        },
+        "submit_fence": {
+          "n": 16,
+          "mean": 391.056,
+          "p50": 354.318,
+          "p95": 543.185
+        },
+        "after_fence_checks": {
+          "n": 16,
+          "mean": 0.1,
+          "p50": 0.046,
+          "p95": 0.295
+        },
+        "writeback": {
+          "n": 16,
+          "mean": 267.29,
+          "p50": 160.458,
+          "p95": 1055.166
+        },
+        "multiple_submission_stages": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "queue_wait_only": {
+          "n": 16,
+          "mean": 0.012,
+          "p50": 0.012,
+          "p95": 0.016
+        },
+        "outside_recorded_submission": {
+          "n": 16,
+          "mean": 57.66,
+          "p50": 42.614,
+          "p95": 136.999
+        }
+      },
+      "nested_ms": {
+        "submission_active": {
+          "n": 16,
+          "mean": 3148.562,
+          "p50": 3073.899,
+          "p95": 4470.979
+        },
+        "queue_wait_union": {
+          "n": 16,
+          "mean": 0.012,
+          "p50": 0.012,
+          "p95": 0.016
+        },
+        "queue_wait_while_active": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "buffer_batch_union": {
+          "n": 16,
+          "mean": 1559.737,
+          "p50": 1387.742,
+          "p95": 2849.514
+        },
+        "buffer_outside_deferred": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "hot_copy_union": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_execute_call": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_signal_call": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_arm_event_call": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_wait_return": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_without_wait_return": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "snapshot_union": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "snapshot_with_declarations": {
+          "n": 16,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        }
+      },
+      "snapshot_declarations": {
+        "n": 16,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "snapshot_callbacks": {
+        "n": 16,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "fence_callbacks": {
+        "n": 16,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "batch_calls_started": {
+        "n": 16,
+        "mean": 42.062,
+        "p50": 42.0,
+        "p95": 46
+      },
+      "hot_calls_started": {
+        "n": 16,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "hot_worker_ms": {
+        "n": 16,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0
+    }
+  },
+  "by_mode_without_png_saves": {
+    "off": {
+      "n": 8,
+      "wall_ms": {
+        "n": 8,
+        "mean": 2591.634,
+        "p50": 2550.432,
+        "p95": 3299.974
+      },
+      "draws": {
+        "n": 8,
+        "mean": 3394.375,
+        "p50": 3440.0,
+        "p95": 5468
+      },
+      "dispatches": {
+        "n": 8,
+        "mean": 3511,
+        "p50": 3364.5,
+        "p95": 5924
+      },
+      "exclusive_ms": {
+        "descriptors": {
+          "n": 8,
+          "mean": 0.118,
+          "p50": 0.089,
+          "p95": 0.296
+        },
+        "texture_heaps": {
+          "n": 8,
+          "mean": 541.082,
+          "p50": 461.076,
+          "p95": 1135.902
+        },
+        "deferred_buffer_batch": {
+          "n": 8,
+          "mean": 1208.261,
+          "p50": 1167.918,
+          "p95": 2026.291
+        },
+        "deferred_other": {
+          "n": 8,
+          "mean": 212.544,
+          "p50": 196.606,
+          "p95": 334.944
+        },
+        "submit_fence": {
+          "n": 8,
+          "mean": 468.463,
+          "p50": 483.25,
+          "p95": 614.733
+        },
+        "after_fence_checks": {
+          "n": 8,
+          "mean": 0.157,
+          "p50": 0.174,
+          "p95": 0.305
+        },
+        "writeback": {
+          "n": 8,
+          "mean": 121.445,
+          "p50": 148.242,
+          "p95": 159.058
+        },
+        "multiple_submission_stages": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "queue_wait_only": {
+          "n": 8,
+          "mean": 0.011,
+          "p50": 0.013,
+          "p95": 0.017
+        },
+        "outside_recorded_submission": {
+          "n": 8,
+          "mean": 39.553,
+          "p50": 39.677,
+          "p95": 48.609
+        }
+      },
+      "nested_ms": {
+        "submission_active": {
+          "n": 8,
+          "mean": 2552.07,
+          "p50": 2510.746,
+          "p95": 3251.353
+        },
+        "queue_wait_union": {
+          "n": 8,
+          "mean": 0.011,
+          "p50": 0.013,
+          "p95": 0.017
+        },
+        "queue_wait_while_active": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "buffer_batch_union": {
+          "n": 8,
+          "mean": 1208.261,
+          "p50": 1167.918,
+          "p95": 2026.291
+        },
+        "buffer_outside_deferred": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "hot_copy_union": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_execute_call": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_signal_call": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_arm_event_call": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_wait_return": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_without_wait_return": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "snapshot_union": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "snapshot_with_declarations": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        }
+      },
+      "snapshot_declarations": {
+        "n": 8,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "snapshot_callbacks": {
+        "n": 8,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "fence_callbacks": {
+        "n": 8,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "batch_calls_started": {
+        "n": 8,
+        "mean": 39.75,
+        "p50": 44.0,
+        "p95": 47
+      },
+      "hot_calls_started": {
+        "n": 8,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "hot_worker_ms": {
+        "n": 8,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0
+    },
+    "on": {
+      "n": 8,
+      "wall_ms": {
+        "n": 8,
+        "mean": 3241.665,
+        "p50": 3233.27,
+        "p95": 4499.186
+      },
+      "draws": {
+        "n": 8,
+        "mean": 3514,
+        "p50": 3559.0,
+        "p95": 5139
+      },
+      "dispatches": {
+        "n": 8,
+        "mean": 3863.875,
+        "p50": 3668.5,
+        "p95": 6064
+      },
+      "exclusive_ms": {
+        "descriptors": {
+          "n": 8,
+          "mean": 0.134,
+          "p50": 0.119,
+          "p95": 0.27
+        },
+        "texture_heaps": {
+          "n": 8,
+          "mean": 680.019,
+          "p50": 678.473,
+          "p95": 1247.825
+        },
+        "deferred_buffer_batch": {
+          "n": 8,
+          "mean": 1685.663,
+          "p50": 1460.725,
+          "p95": 2849.514
+        },
+        "deferred_other": {
+          "n": 8,
+          "mean": 303.757,
+          "p50": 301.505,
+          "p95": 399.345
+        },
+        "submit_fence": {
+          "n": 8,
+          "mean": 377.135,
+          "p50": 324.515,
+          "p95": 537.157
+        },
+        "after_fence_checks": {
+          "n": 8,
+          "mean": 0.096,
+          "p50": 0.045,
+          "p95": 0.292
+        },
+        "writeback": {
+          "n": 8,
+          "mean": 153.739,
+          "p50": 157.926,
+          "p95": 167.343
+        },
+        "multiple_submission_stages": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "queue_wait_only": {
+          "n": 8,
+          "mean": 0.012,
+          "p50": 0.012,
+          "p95": 0.016
+        },
+        "outside_recorded_submission": {
+          "n": 8,
+          "mean": 41.11,
+          "p50": 39.986,
+          "p95": 60.316
+        }
+      },
+      "nested_ms": {
+        "submission_active": {
+          "n": 8,
+          "mean": 3200.543,
+          "p50": 3178.68,
+          "p95": 4470.979
+        },
+        "queue_wait_union": {
+          "n": 8,
+          "mean": 0.012,
+          "p50": 0.012,
+          "p95": 0.016
+        },
+        "queue_wait_while_active": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "buffer_batch_union": {
+          "n": 8,
+          "mean": 1685.663,
+          "p50": 1460.725,
+          "p95": 2849.514
+        },
+        "buffer_outside_deferred": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "hot_copy_union": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_execute_call": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_signal_call": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_arm_event_call": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_wait_return": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "fence_without_wait_return": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "snapshot_union": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "snapshot_with_declarations": {
+          "n": 8,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        }
+      },
+      "snapshot_declarations": {
+        "n": 8,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "snapshot_callbacks": {
+        "n": 8,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "fence_callbacks": {
+        "n": 8,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "batch_calls_started": {
+        "n": 8,
+        "mean": 41.75,
+        "p50": 41.5,
+        "p95": 46
+      },
+      "hot_calls_started": {
+        "n": 8,
+        "mean": 0,
+        "p50": 0.0,
+        "p95": 0
+      },
+      "hot_worker_ms": {
+        "n": 8,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0
+    }
+  },
+  "by_mode_capture": {
+    "off": {
+      "captured": {
+        "n": 3,
+        "wall_ms": {
+          "n": 3,
+          "mean": 2918.128,
+          "p50": 2462.824,
+          "p95": 3955.979
+        },
+        "draws": {
+          "n": 3,
+          "mean": 2909.333,
+          "p50": 3615,
+          "p95": 4574
+        },
+        "dispatches": {
+          "n": 3,
+          "mean": 2856,
+          "p50": 2988,
+          "p95": 3749
+        },
+        "exclusive_ms": {
+          "descriptors": {
+            "n": 3,
+            "mean": 0.108,
+            "p50": 0.125,
+            "p95": 0.149
+          },
+          "texture_heaps": {
+            "n": 3,
+            "mean": 380.412,
+            "p50": 466.657,
+            "p95": 502.674
+          },
+          "deferred_buffer_batch": {
+            "n": 3,
+            "mean": 1620.003,
+            "p50": 1486.339,
+            "p95": 2511.956
+          },
+          "deferred_other": {
+            "n": 3,
+            "mean": 227.709,
+            "p50": 248.915,
+            "p95": 255.097
+          },
+          "submit_fence": {
+            "n": 3,
+            "mean": 457.164,
+            "p50": 453.775,
+            "p95": 506.529
+          },
+          "after_fence_checks": {
+            "n": 3,
+            "mean": 0.091,
+            "p50": 0.044,
+            "p95": 0.189
+          },
+          "writeback": {
+            "n": 3,
+            "mean": 118.143,
+            "p50": 142.882,
+            "p95": 153.091
+          },
+          "multiple_submission_stages": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "queue_wait_only": {
+            "n": 3,
+            "mean": 0.008,
+            "p50": 0.007,
+            "p95": 0.013
+          },
+          "outside_recorded_submission": {
+            "n": 3,
+            "mean": 114.491,
+            "p50": 132.007,
+            "p95": 151.227
+          }
+        },
+        "nested_ms": {
+          "submission_active": {
+            "n": 3,
+            "mean": 2803.63,
+            "p50": 2402.583,
+            "p95": 3823.965
+          },
+          "queue_wait_union": {
+            "n": 3,
+            "mean": 0.008,
+            "p50": 0.007,
+            "p95": 0.013
+          },
+          "queue_wait_while_active": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "buffer_batch_union": {
+            "n": 3,
+            "mean": 1620.003,
+            "p50": 1486.339,
+            "p95": 2511.956
+          },
+          "buffer_outside_deferred": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "hot_copy_union": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_execute_call": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_signal_call": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_arm_event_call": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_wait_return": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_without_wait_return": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "snapshot_union": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "snapshot_with_declarations": {
+            "n": 3,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          }
+        },
+        "snapshot_declarations": {
+          "n": 3,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "snapshot_callbacks": {
+          "n": 3,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "fence_callbacks": {
+          "n": 3,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "batch_calls_started": {
+          "n": 3,
+          "mean": 39,
+          "p50": 43,
+          "p95": 44
+        },
+        "hot_calls_started": {
+          "n": 3,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "hot_worker_ms": {
+          "n": 3,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "hot_attempts_started": 0,
+        "hot_successes_started": 0,
+        "hot_stored_bytes_started": 0,
+        "hot_requested_bytes_started": 0
+      },
+      "uncaptured": {
+        "n": 11,
+        "wall_ms": {
+          "n": 11,
+          "mean": 2667.695,
+          "p50": 2633.387,
+          "p95": 3364.128
+        },
+        "draws": {
+          "n": 11,
+          "mean": 3285.455,
+          "p50": 3826,
+          "p95": 5468
+        },
+        "dispatches": {
+          "n": 11,
+          "mean": 3402.364,
+          "p50": 3314,
+          "p95": 5924
+        },
+        "exclusive_ms": {
+          "descriptors": {
+            "n": 11,
+            "mean": 0.112,
+            "p50": 0.086,
+            "p95": 0.296
+          },
+          "texture_heaps": {
+            "n": 11,
+            "mean": 512.11,
+            "p50": 437.774,
+            "p95": 1135.902
+          },
+          "deferred_buffer_batch": {
+            "n": 11,
+            "mean": 1200.685,
+            "p50": 1203.426,
+            "p95": 2026.291
+          },
+          "deferred_other": {
+            "n": 11,
+            "mean": 241.705,
+            "p50": 210.798,
+            "p95": 445.158
+          },
+          "submit_fence": {
+            "n": 11,
+            "mean": 477.116,
+            "p50": 500.788,
+            "p95": 614.733
+          },
+          "after_fence_checks": {
+            "n": 11,
+            "mean": 0.152,
+            "p50": 0.178,
+            "p95": 0.305
+          },
+          "writeback": {
+            "n": 11,
+            "mean": 197.539,
+            "p50": 153.848,
+            "p95": 545.835
+          },
+          "multiple_submission_stages": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "queue_wait_only": {
+            "n": 11,
+            "mean": 0.011,
+            "p50": 0.012,
+            "p95": 0.017
+          },
+          "outside_recorded_submission": {
+            "n": 11,
+            "mean": 38.265,
+            "p50": 39.458,
+            "p95": 55.67
+          }
+        },
+        "nested_ms": {
+          "submission_active": {
+            "n": 11,
+            "mean": 2629.418,
+            "p50": 2593.481,
+            "p95": 3325.604
+          },
+          "queue_wait_union": {
+            "n": 11,
+            "mean": 0.011,
+            "p50": 0.012,
+            "p95": 0.017
+          },
+          "queue_wait_while_active": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "buffer_batch_union": {
+            "n": 11,
+            "mean": 1200.685,
+            "p50": 1203.426,
+            "p95": 2026.291
+          },
+          "buffer_outside_deferred": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "hot_copy_union": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_execute_call": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_signal_call": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_arm_event_call": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_wait_return": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_without_wait_return": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "snapshot_union": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "snapshot_with_declarations": {
+            "n": 11,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          }
+        },
+        "snapshot_declarations": {
+          "n": 11,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "snapshot_callbacks": {
+          "n": 11,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "fence_callbacks": {
+          "n": 11,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "batch_calls_started": {
+          "n": 11,
+          "mean": 39.545,
+          "p50": 44,
+          "p95": 47
+        },
+        "hot_calls_started": {
+          "n": 11,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0
+        },
+        "hot_worker_ms": {
+          "n": 11,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "hot_attempts_started": 0,
+        "hot_successes_started": 0,
+        "hot_stored_bytes_started": 0,
+        "hot_requested_bytes_started": 0
+      }
+    },
+    "on": {
+      "captured": {
+        "n": 4,
+        "wall_ms": {
+          "n": 4,
+          "mean": 3296.209,
+          "p50": 3066.63,
+          "p95": 4380.181
+        },
+        "draws": {
+          "n": 4,
+          "mean": 4855.5,
+          "p50": 4980.5,
+          "p95": 6930
+        },
+        "dispatches": {
+          "n": 4,
+          "mean": 4938.75,
+          "p50": 4618.0,
+          "p95": 7808
+        },
+        "exclusive_ms": {
+          "descriptors": {
+            "n": 4,
+            "mean": 0.164,
+            "p50": 0.162,
+            "p95": 0.191
+          },
+          "texture_heaps": {
+            "n": 4,
+            "mean": 560.059,
+            "p50": 587.977,
+            "p95": 769.345
+          },
+          "deferred_buffer_batch": {
+            "n": 4,
+            "mean": 1804.15,
+            "p50": 1636.602,
+            "p95": 2822.985
+          },
+          "deferred_other": {
+            "n": 4,
+            "mean": 265.67,
+            "p50": 249.917,
+            "p95": 348.372
+          },
+          "submit_fence": {
+            "n": 4,
+            "mean": 394.97,
+            "p50": 425.292,
+            "p95": 522.696
+          },
+          "after_fence_checks": {
+            "n": 4,
+            "mean": 0.165,
+            "p50": 0.163,
+            "p95": 0.295
+          },
+          "writeback": {
+            "n": 4,
+            "mean": 154.358,
+            "p50": 155.023,
+            "p95": 166.48
+          },
+          "multiple_submission_stages": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "queue_wait_only": {
+            "n": 4,
+            "mean": 0.011,
+            "p50": 0.01,
+            "p95": 0.015
+          },
+          "outside_recorded_submission": {
+            "n": 4,
+            "mean": 116.662,
+            "p50": 116.029,
+            "p95": 136.999
+          }
+        },
+        "nested_ms": {
+          "submission_active": {
+            "n": 4,
+            "mean": 3179.535,
+            "p50": 2949.325,
+            "p95": 4252.49
+          },
+          "queue_wait_union": {
+            "n": 4,
+            "mean": 0.011,
+            "p50": 0.01,
+            "p95": 0.015
+          },
+          "queue_wait_while_active": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "buffer_batch_union": {
+            "n": 4,
+            "mean": 1804.15,
+            "p50": 1636.602,
+            "p95": 2822.985
+          },
+          "buffer_outside_deferred": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "hot_copy_union": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_execute_call": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_signal_call": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_arm_event_call": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_wait_return": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_without_wait_return": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "snapshot_union": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "snapshot_with_declarations": {
+            "n": 4,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          }
+        },
+        "snapshot_declarations": {
+          "n": 4,
+          "mean": 0,
+          "p50": 0.0,
+          "p95": 0
+        },
+        "snapshot_callbacks": {
+          "n": 4,
+          "mean": 0,
+          "p50": 0.0,
+          "p95": 0
+        },
+        "fence_callbacks": {
+          "n": 4,
+          "mean": 0,
+          "p50": 0.0,
+          "p95": 0
+        },
+        "batch_calls_started": {
+          "n": 4,
+          "mean": 42.25,
+          "p50": 42.0,
+          "p95": 45
+        },
+        "hot_calls_started": {
+          "n": 4,
+          "mean": 0,
+          "p50": 0.0,
+          "p95": 0
+        },
+        "hot_worker_ms": {
+          "n": 4,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "hot_attempts_started": 0,
+        "hot_successes_started": 0,
+        "hot_stored_bytes_started": 0,
+        "hot_requested_bytes_started": 0
+      },
+      "uncaptured": {
+        "n": 12,
+        "wall_ms": {
+          "n": 12,
+          "mean": 3176.241,
+          "p50": 3233.27,
+          "p95": 4499.186
+        },
+        "draws": {
+          "n": 12,
+          "mean": 3770.25,
+          "p50": 3805.5,
+          "p95": 5774
+        },
+        "dispatches": {
+          "n": 12,
+          "mean": 3781.333,
+          "p50": 3668.5,
+          "p95": 6064
+        },
+        "exclusive_ms": {
+          "descriptors": {
+            "n": 12,
+            "mean": 0.293,
+            "p50": 0.133,
+            "p95": 2.052
+          },
+          "texture_heaps": {
+            "n": 12,
+            "mean": 614.981,
+            "p50": 538.17,
+            "p95": 1247.825
+          },
+          "deferred_buffer_batch": {
+            "n": 12,
+            "mean": 1478.266,
+            "p50": 1313.309,
+            "p95": 2849.514
+          },
+          "deferred_other": {
+            "n": 12,
+            "mean": 349.933,
+            "p50": 337.741,
+            "p95": 594.342
+          },
+          "submit_fence": {
+            "n": 12,
+            "mean": 389.751,
+            "p50": 326.303,
+            "p95": 543.185
+          },
+          "after_fence_checks": {
+            "n": 12,
+            "mean": 0.079,
+            "p50": 0.046,
+            "p95": 0.292
+          },
+          "writeback": {
+            "n": 12,
+            "mean": 304.934,
+            "p50": 160.458,
+            "p95": 1055.166
+          },
+          "multiple_submission_stages": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "queue_wait_only": {
+            "n": 12,
+            "mean": 0.012,
+            "p50": 0.012,
+            "p95": 0.016
+          },
+          "outside_recorded_submission": {
+            "n": 12,
+            "mean": 37.992,
+            "p50": 37.252,
+            "p95": 60.316
+          }
+        },
+        "nested_ms": {
+          "submission_active": {
+            "n": 12,
+            "mean": 3138.237,
+            "p50": 3178.68,
+            "p95": 4470.979
+          },
+          "queue_wait_union": {
+            "n": 12,
+            "mean": 0.012,
+            "p50": 0.012,
+            "p95": 0.016
+          },
+          "queue_wait_while_active": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "buffer_batch_union": {
+            "n": 12,
+            "mean": 1478.266,
+            "p50": 1313.309,
+            "p95": 2849.514
+          },
+          "buffer_outside_deferred": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "hot_copy_union": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_execute_call": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_signal_call": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_arm_event_call": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_wait_return": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "fence_without_wait_return": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "snapshot_union": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          },
+          "snapshot_with_declarations": {
+            "n": 12,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0
+          }
+        },
+        "snapshot_declarations": {
+          "n": 12,
+          "mean": 0,
+          "p50": 0.0,
+          "p95": 0
+        },
+        "snapshot_callbacks": {
+          "n": 12,
+          "mean": 0,
+          "p50": 0.0,
+          "p95": 0
+        },
+        "fence_callbacks": {
+          "n": 12,
+          "mean": 0,
+          "p50": 0.0,
+          "p95": 0
+        },
+        "batch_calls_started": {
+          "n": 12,
+          "mean": 42,
+          "p50": 42.0,
+          "p95": 46
+        },
+        "hot_calls_started": {
+          "n": 12,
+          "mean": 0,
+          "p50": 0.0,
+          "p95": 0
+        },
+        "hot_worker_ms": {
+          "n": 12,
+          "mean": 0.0,
+          "p50": 0.0,
+          "p95": 0.0
+        },
+        "hot_attempts_started": 0,
+        "hot_successes_started": 0,
+        "hot_stored_bytes_started": 0,
+        "hot_requested_bytes_started": 0
+      }
+    }
+  },
+  "frames": [
+    {
+      "frame": 1684,
+      "offset": 1,
+      "start_offset": 0,
+      "start_us": 77158333,
+      "end_us": 82055973,
+      "wall_ms": 4897.64,
+      "draws": 9251,
+      "dispatches": 2535,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": null,
+      "batch_modes_intersected": {
+        "off": 39
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 39,
+      "planned_bytes_started": 15646086078,
+      "copied_bytes_started": 15646086078,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.179,
+        "texture_heaps": 653.653,
+        "deferred_buffer_batch": 2269.194,
+        "deferred_other": 264.044,
+        "submit_fence": 385.61,
+        "after_fence_checks": 0.046,
+        "writeback": 140.663,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.01,
+        "outside_recorded_submission": 1184.241
+      },
+      "nested_ms": {
+        "submission_active": 3713.389,
+        "queue_wait_union": 0.01,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 2269.194,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1685,
+      "offset": 2,
+      "start_offset": 1,
+      "start_us": 82055973,
+      "end_us": 84055854,
+      "wall_ms": 1999.881,
+      "draws": 3660,
+      "dispatches": 2032,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": null,
+      "batch_modes_intersected": {
+        "off": 44
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 44,
+      "planned_bytes_started": 16350976654,
+      "copied_bytes_started": 16350976654,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.096,
+        "texture_heaps": 258.261,
+        "deferred_buffer_batch": 1194.096,
+        "deferred_other": 179.942,
+        "submit_fence": 224.369,
+        "after_fence_checks": 0.045,
+        "writeback": 128.112,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.016,
+        "outside_recorded_submission": 14.944
+      },
+      "nested_ms": {
+        "submission_active": 1984.921,
+        "queue_wait_union": 0.016,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1194.096,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1686,
+      "offset": 3,
+      "start_offset": 2,
+      "start_us": 84055854,
+      "end_us": 88623928,
+      "wall_ms": 4568.074,
+      "draws": 3795,
+      "dispatches": 2026,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": null,
+      "batch_modes_intersected": {
+        "off": 41
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 41,
+      "planned_bytes_started": 15908946662,
+      "copied_bytes_started": 15908946662,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.149,
+        "texture_heaps": 303.919,
+        "deferred_buffer_batch": 3648.898,
+        "deferred_other": 234.047,
+        "submit_fence": 219.623,
+        "after_fence_checks": 0.05,
+        "writeback": 134.224,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.013,
+        "outside_recorded_submission": 27.151
+      },
+      "nested_ms": {
+        "submission_active": 4540.91,
+        "queue_wait_union": 0.013,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 3648.898,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1687,
+      "offset": 4,
+      "start_offset": 3,
+      "start_us": 88623928,
+      "end_us": 90390304,
+      "wall_ms": 1766.376,
+      "draws": 2085,
+      "dispatches": 2811,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": null,
+      "batch_modes_intersected": {
+        "off": 38
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 38,
+      "planned_bytes_started": 15644396454,
+      "copied_bytes_started": 15644396454,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.099,
+        "texture_heaps": 232.56,
+        "deferred_buffer_batch": 932.216,
+        "deferred_other": 235.595,
+        "submit_fence": 199.676,
+        "after_fence_checks": 0.049,
+        "writeback": 128.496,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.013,
+        "outside_recorded_submission": 37.672
+      },
+      "nested_ms": {
+        "submission_active": 1728.691,
+        "queue_wait_union": 0.013,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 932.216,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1688,
+      "offset": 5,
+      "start_offset": 4,
+      "start_us": 90390304,
+      "end_us": 92190332,
+      "wall_ms": 1800.028,
+      "draws": 2194,
+      "dispatches": 2416,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": null,
+      "batch_modes_intersected": {
+        "off": 38
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 38,
+      "planned_bytes_started": 15414569910,
+      "copied_bytes_started": 15414569910,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.112,
+        "texture_heaps": 381.131,
+        "deferred_buffer_batch": 798.545,
+        "deferred_other": 272.181,
+        "submit_fence": 183.038,
+        "after_fence_checks": 0.052,
+        "writeback": 128.249,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.014,
+        "outside_recorded_submission": 36.706
+      },
+      "nested_ms": {
+        "submission_active": 1763.308,
+        "queue_wait_union": 0.014,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 798.545,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1689,
+      "offset": 6,
+      "start_offset": 5,
+      "start_us": 92190332,
+      "end_us": 94488921,
+      "wall_ms": 2298.589,
+      "draws": 3812,
+      "dispatches": 2575,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": null,
+      "batch_modes_intersected": {
+        "off": 42
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 42,
+      "planned_bytes_started": 16943823046,
+      "copied_bytes_started": 16943823046,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.104,
+        "texture_heaps": 388.78,
+        "deferred_buffer_batch": 1308.069,
+        "deferred_other": 258.107,
+        "submit_fence": 173.666,
+        "after_fence_checks": 0.048,
+        "writeback": 146.608,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.017,
+        "outside_recorded_submission": 23.19
+      },
+      "nested_ms": {
+        "submission_active": 2275.382,
+        "queue_wait_union": 0.017,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1308.069,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1690,
+      "offset": 7,
+      "start_offset": 6,
+      "start_us": 94488921,
+      "end_us": 97089190,
+      "wall_ms": 2600.269,
+      "draws": 2935,
+      "dispatches": 2195,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": null,
+      "batch_modes_intersected": {
+        "off": 45
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 45,
+      "planned_bytes_started": 18658417498,
+      "copied_bytes_started": 18658417498,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.092,
+        "texture_heaps": 521.279,
+        "deferred_buffer_batch": 1145.612,
+        "deferred_other": 233.332,
+        "submit_fence": 491.711,
+        "after_fence_checks": 1.507,
+        "writeback": 165.031,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.012,
+        "outside_recorded_submission": 41.693
+      },
+      "nested_ms": {
+        "submission_active": 2558.564,
+        "queue_wait_union": 0.012,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1145.612,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1691,
+      "offset": 8,
+      "start_offset": 7,
+      "start_us": 97089190,
+      "end_us": 100655973,
+      "wall_ms": 3566.783,
+      "draws": 2802,
+      "dispatches": 3379,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": null,
+      "batch_modes_intersected": {
+        "off": 45
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 45,
+      "planned_bytes_started": 19320089694,
+      "copied_bytes_started": 19320089694,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.093,
+        "texture_heaps": 410.179,
+        "deferred_buffer_batch": 2319.954,
+        "deferred_other": 180.227,
+        "submit_fence": 460.19,
+        "after_fence_checks": 0.527,
+        "writeback": 152.013,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.018,
+        "outside_recorded_submission": 43.582
+      },
+      "nested_ms": {
+        "submission_active": 3523.183,
+        "queue_wait_union": 0.018,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 2319.954,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1692,
+      "offset": 9,
+      "start_offset": 8,
+      "start_us": 100655973,
+      "end_us": 102922102,
+      "wall_ms": 2266.129,
+      "draws": 2553,
+      "dispatches": 2695,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": 0,
+      "batch_modes_intersected": {
+        "off": 47
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 47,
+      "planned_bytes_started": 19470159542,
+      "copied_bytes_started": 19470159542,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.096,
+        "texture_heaps": 301.669,
+        "deferred_buffer_batch": 1132.41,
+        "deferred_other": 181.283,
+        "submit_fence": 465.712,
+        "after_fence_checks": 0.305,
+        "writeback": 156.729,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.017,
+        "outside_recorded_submission": 27.908
+      },
+      "nested_ms": {
+        "submission_active": 2238.204,
+        "queue_wait_union": 0.017,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1132.41,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1693,
+      "offset": 10,
+      "start_offset": 9,
+      "start_us": 102922102,
+      "end_us": 105555489,
+      "wall_ms": 2633.387,
+      "draws": 2455,
+      "dispatches": 3314,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "on",
+      "cycle": 0,
+      "batch_modes_intersected": {
+        "off": 33
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 33,
+      "planned_bytes_started": 13396981202,
+      "copied_bytes_started": 13396981202,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.057,
+        "texture_heaps": 484.378,
+        "deferred_buffer_batch": 1282.818,
+        "deferred_other": 133.451,
+        "submit_fence": 614.733,
+        "after_fence_checks": 0.189,
+        "writeback": 77.855,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.009,
+        "outside_recorded_submission": 39.897
+      },
+      "nested_ms": {
+        "submission_active": 2593.481,
+        "queue_wait_union": 0.009,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1282.818,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1694,
+      "offset": 11,
+      "start_offset": 10,
+      "start_us": 105555489,
+      "end_us": 107322494,
+      "wall_ms": 1767.005,
+      "draws": 3210,
+      "dispatches": 3846,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 0,
+      "batch_modes_intersected": {
+        "on": 41
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 41,
+      "planned_bytes_started": 18012968950,
+      "copied_bytes_started": 18012968950,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.089,
+        "texture_heaps": 287.012,
+        "deferred_buffer_batch": 789.728,
+        "deferred_other": 181.88,
+        "submit_fence": 324.817,
+        "after_fence_checks": 0.047,
+        "writeback": 159.347,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.011,
+        "outside_recorded_submission": 24.074
+      },
+      "nested_ms": {
+        "submission_active": 1742.92,
+        "queue_wait_union": 0.011,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 789.728,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1695,
+      "offset": 12,
+      "start_offset": 11,
+      "start_us": 107322494,
+      "end_us": 111702675,
+      "wall_ms": 4380.181,
+      "draws": 2531,
+      "dispatches": 2711,
+      "end_frame_captured": true,
+      "png_saves_in_interval": {
+        "frame": 1
+      },
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 0,
+      "batch_modes_intersected": {
+        "on": 40
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 40,
+      "planned_bytes_started": 17802218806,
+      "copied_bytes_started": 17802218806,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.139,
+        "texture_heaps": 667.526,
+        "deferred_buffer_batch": 2822.985,
+        "deferred_other": 214.475,
+        "submit_fence": 380.847,
+        "after_fence_checks": 0.038,
+        "writeback": 166.48,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.015,
+        "outside_recorded_submission": 127.676
+      },
+      "nested_ms": {
+        "submission_active": 4252.49,
+        "queue_wait_union": 0.015,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 2822.985,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1696,
+      "offset": 13,
+      "start_offset": 12,
+      "start_us": 111702675,
+      "end_us": 114722219,
+      "wall_ms": 3019.544,
+      "draws": 2131,
+      "dispatches": 2551,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {
+        "material": 2
+      },
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 0,
+      "batch_modes_intersected": {
+        "on": 39
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 39,
+      "planned_bytes_started": 17985696754,
+      "copied_bytes_started": 17985696754,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 2.052,
+        "texture_heaps": 426.852,
+        "deferred_buffer_batch": 1251.431,
+        "deferred_other": 484.612,
+        "submit_fence": 327.789,
+        "after_fence_checks": 0.039,
+        "writeback": 501.694,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.004,
+        "outside_recorded_submission": 25.071
+      },
+      "nested_ms": {
+        "submission_active": 2994.469,
+        "queue_wait_union": 0.004,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1251.431,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1697,
+      "offset": 14,
+      "start_offset": 13,
+      "start_us": 114722219,
+      "end_us": 116988651,
+      "wall_ms": 2266.432,
+      "draws": 951,
+      "dispatches": 2322,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "off",
+      "cycle": 0,
+      "batch_modes_intersected": {
+        "on": 40
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 40,
+      "planned_bytes_started": 18142770866,
+      "copied_bytes_started": 18142770866,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.069,
+        "texture_heaps": 354.686,
+        "deferred_buffer_batch": 1188.104,
+        "deferred_other": 221.819,
+        "submit_fence": 324.213,
+        "after_fence_checks": 0.039,
+        "writeback": 142.948,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.016,
+        "outside_recorded_submission": 34.538
+      },
+      "nested_ms": {
+        "submission_active": 2231.878,
+        "queue_wait_union": 0.016,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1188.104,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1698,
+      "offset": 15,
+      "start_offset": 14,
+      "start_us": 116988651,
+      "end_us": 118988586,
+      "wall_ms": 1999.935,
+      "draws": 516,
+      "dispatches": 1687,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": 0,
+      "batch_modes_intersected": {
+        "off": 29
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 29,
+      "planned_bytes_started": 12807250062,
+      "copied_bytes_started": 12807250062,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.045,
+        "texture_heaps": 292.381,
+        "deferred_buffer_batch": 926.666,
+        "deferred_other": 127.858,
+        "submit_fence": 545.289,
+        "after_fence_checks": 0.189,
+        "writeback": 62.957,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.005,
+        "outside_recorded_submission": 44.545
+      },
+      "nested_ms": {
+        "submission_active": 1955.385,
+        "queue_wait_union": 0.005,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 926.666,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1699,
+      "offset": 16,
+      "start_offset": 15,
+      "start_us": 118988586,
+      "end_us": 121451410,
+      "wall_ms": 2462.824,
+      "draws": 539,
+      "dispatches": 1831,
+      "end_frame_captured": true,
+      "png_saves_in_interval": {
+        "frame": 1
+      },
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": 0,
+      "batch_modes_intersected": {
+        "off": 30
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 30,
+      "planned_bytes_started": 12511651540,
+      "copied_bytes_started": 12511651540,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.049,
+        "texture_heaps": 171.906,
+        "deferred_buffer_batch": 1486.339,
+        "deferred_other": 179.115,
+        "submit_fence": 506.529,
+        "after_fence_checks": 0.189,
+        "writeback": 58.456,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.003,
+        "outside_recorded_submission": 60.238
+      },
+      "nested_ms": {
+        "submission_active": 2402.583,
+        "queue_wait_union": 0.003,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1486.339,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1700,
+      "offset": 17,
+      "start_offset": 16,
+      "start_us": 121451410,
+      "end_us": 123355124,
+      "wall_ms": 1903.714,
+      "draws": 998,
+      "dispatches": 2322,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {
+        "material": 2
+      },
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": 1,
+      "batch_modes_intersected": {
+        "off": 30
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 30,
+      "planned_bytes_started": 12771526392,
+      "copied_bytes_started": 12771526392,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.045,
+        "texture_heaps": 152.305,
+        "deferred_buffer_batch": 836.615,
+        "deferred_other": 170.814,
+        "submit_fence": 551.176,
+        "after_fence_checks": 0.178,
+        "writeback": 182.258,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.006,
+        "outside_recorded_submission": 10.317
+      },
+      "nested_ms": {
+        "submission_active": 1893.391,
+        "queue_wait_union": 0.006,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 836.615,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1701,
+      "offset": 18,
+      "start_offset": 17,
+      "start_us": 123355124,
+      "end_us": 125822602,
+      "wall_ms": 2467.478,
+      "draws": 5020,
+      "dispatches": 3671,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "on",
+      "cycle": 1,
+      "batch_modes_intersected": {
+        "off": 30
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 30,
+      "planned_bytes_started": 12594051872,
+      "copied_bytes_started": 12594051872,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.117,
+        "texture_heaps": 437.774,
+        "deferred_buffer_batch": 1203.426,
+        "deferred_other": 182.414,
+        "submit_fence": 539.493,
+        "after_fence_checks": 0.159,
+        "writeback": 64.628,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.009,
+        "outside_recorded_submission": 39.458
+      },
+      "nested_ms": {
+        "submission_active": 2428.011,
+        "queue_wait_union": 0.009,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1203.426,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1702,
+      "offset": 19,
+      "start_offset": 18,
+      "start_us": 125822602,
+      "end_us": 130321788,
+      "wall_ms": 4499.186,
+      "draws": 3497,
+      "dispatches": 2666,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 1,
+      "batch_modes_intersected": {
+        "on": 36
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 36,
+      "planned_bytes_started": 18066643306,
+      "copied_bytes_started": 18066643306,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.096,
+        "texture_heaps": 619.299,
+        "deferred_buffer_batch": 2849.514,
+        "deferred_other": 317.406,
+        "submit_fence": 537.157,
+        "after_fence_checks": 0.292,
+        "writeback": 147.215,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.008,
+        "outside_recorded_submission": 28.199
+      },
+      "nested_ms": {
+        "submission_active": 4470.979,
+        "queue_wait_union": 0.008,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 2849.514,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1703,
+      "offset": 20,
+      "start_offset": 19,
+      "start_us": 130321788,
+      "end_us": 133427613,
+      "wall_ms": 3105.825,
+      "draws": 5276,
+      "dispatches": 4189,
+      "end_frame_captured": true,
+      "png_saves_in_interval": {
+        "frame": 1
+      },
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 1,
+      "batch_modes_intersected": {
+        "on": 41
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 41,
+      "planned_bytes_started": 19151507544,
+      "copied_bytes_started": 19151507544,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.191,
+        "texture_heaps": 294.937,
+        "deferred_buffer_batch": 1872.906,
+        "deferred_other": 225.716,
+        "submit_fence": 469.737,
+        "after_fence_checks": 0.282,
+        "writeback": 144.457,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.009,
+        "outside_recorded_submission": 97.59
+      },
+      "nested_ms": {
+        "submission_active": 3008.226,
+        "queue_wait_union": 0.009,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1872.906,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1704,
+      "offset": 21,
+      "start_offset": 20,
+      "start_us": 133427613,
+      "end_us": 135855084,
+      "wall_ms": 2427.471,
+      "draws": 5774,
+      "dispatches": 3044,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {
+        "material": 2
+      },
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 1,
+      "batch_modes_intersected": {
+        "on": 42
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 42,
+      "planned_bytes_started": 18907507820,
+      "copied_bytes_started": 18907507820,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.15,
+        "texture_heaps": 309.217,
+        "deferred_buffer_batch": 1002.245,
+        "deferred_other": 327.879,
+        "submit_fence": 470.179,
+        "after_fence_checks": 0.047,
+        "writeback": 290.529,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.014,
+        "outside_recorded_submission": 27.211
+      },
+      "nested_ms": {
+        "submission_active": 2400.246,
+        "queue_wait_union": 0.014,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1002.245,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1705,
+      "offset": 22,
+      "start_offset": 21,
+      "start_us": 135855084,
+      "end_us": 138889202,
+      "wall_ms": 3034.118,
+      "draws": 4771,
+      "dispatches": 2911,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "off",
+      "cycle": 1,
+      "batch_modes_intersected": {
+        "on": 44
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 44,
+      "planned_bytes_started": 19816397866,
+      "copied_bytes_started": 19816397866,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.124,
+        "texture_heaps": 769.557,
+        "deferred_buffer_batch": 1469.785,
+        "deferred_other": 285.604,
+        "submit_fence": 297.683,
+        "after_fence_checks": 0.043,
+        "writeback": 158.365,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.015,
+        "outside_recorded_submission": 52.942
+      },
+      "nested_ms": {
+        "submission_active": 2981.161,
+        "queue_wait_union": 0.015,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1469.785,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1706,
+      "offset": 23,
+      "start_offset": 22,
+      "start_us": 138889202,
+      "end_us": 141088611,
+      "wall_ms": 2199.409,
+      "draws": 3054,
+      "dispatches": 2892,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": 1,
+      "batch_modes_intersected": {
+        "off": 46
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 46,
+      "planned_bytes_started": 20253983298,
+      "copied_bytes_started": 20253983298,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.08,
+        "texture_heaps": 547.392,
+        "deferred_buffer_batch": 891.979,
+        "deferred_other": 210.798,
+        "submit_fence": 361.058,
+        "after_fence_checks": 0.047,
+        "writeback": 150.204,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.013,
+        "outside_recorded_submission": 37.838
+      },
+      "nested_ms": {
+        "submission_active": 2161.558,
+        "queue_wait_union": 0.013,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 891.979,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1707,
+      "offset": 24,
+      "start_offset": 23,
+      "start_us": 141088611,
+      "end_us": 145044590,
+      "wall_ms": 3955.979,
+      "draws": 4574,
+      "dispatches": 3749,
+      "end_frame_captured": true,
+      "png_saves_in_interval": {
+        "frame": 1
+      },
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": 1,
+      "batch_modes_intersected": {
+        "off": 44
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 44,
+      "planned_bytes_started": 19931158904,
+      "copied_bytes_started": 19931158904,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.125,
+        "texture_heaps": 502.674,
+        "deferred_buffer_batch": 2511.956,
+        "deferred_other": 255.097,
+        "submit_fence": 411.187,
+        "after_fence_checks": 0.044,
+        "writeback": 142.882,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.007,
+        "outside_recorded_submission": 132.007
+      },
+      "nested_ms": {
+        "submission_active": 3823.965,
+        "queue_wait_union": 0.007,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 2511.956,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1708,
+      "offset": 25,
+      "start_offset": 24,
+      "start_us": 145044590,
+      "end_us": 148388316,
+      "wall_ms": 3343.726,
+      "draws": 3976,
+      "dispatches": 3120,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {
+        "material": 2
+      },
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": 2,
+      "batch_modes_intersected": {
+        "off": 44
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 44,
+      "planned_bytes_started": 20521875472,
+      "copied_bytes_started": 20521875472,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.152,
+        "texture_heaps": 379.853,
+        "deferred_buffer_batch": 1470.936,
+        "deferred_other": 342.435,
+        "submit_fence": 548.649,
+        "after_fence_checks": 0.187,
+        "writeback": 545.835,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.009,
+        "outside_recorded_submission": 55.67
+      },
+      "nested_ms": {
+        "submission_active": 3288.047,
+        "queue_wait_union": 0.009,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1470.936,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1709,
+      "offset": 26,
+      "start_offset": 25,
+      "start_us": 148388316,
+      "end_us": 151688290,
+      "wall_ms": 3299.974,
+      "draws": 4263,
+      "dispatches": 3415,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "on",
+      "cycle": 2,
+      "batch_modes_intersected": {
+        "off": 45
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 45,
+      "planned_bytes_started": 21024959592,
+      "copied_bytes_started": 21024959592,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.082,
+        "texture_heaps": 330.325,
+        "deferred_buffer_batch": 2026.291,
+        "deferred_other": 247.3,
+        "submit_fence": 500.788,
+        "after_fence_checks": 0.287,
+        "writeback": 146.28,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.012,
+        "outside_recorded_submission": 48.609
+      },
+      "nested_ms": {
+        "submission_active": 3251.353,
+        "queue_wait_union": 0.012,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 2026.291,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1710,
+      "offset": 27,
+      "start_offset": 26,
+      "start_us": 151688290,
+      "end_us": 155888214,
+      "wall_ms": 4199.924,
+      "draws": 4659,
+      "dispatches": 4124,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 2,
+      "batch_modes_intersected": {
+        "on": 40
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 40,
+      "planned_bytes_started": 20031942092,
+      "copied_bytes_started": 20031942092,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.141,
+        "texture_heaps": 402.707,
+        "deferred_buffer_batch": 2802.745,
+        "deferred_other": 285.368,
+        "submit_fence": 533.093,
+        "after_fence_checks": 0.21,
+        "writeback": 135.641,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.012,
+        "outside_recorded_submission": 40.007
+      },
+      "nested_ms": {
+        "submission_active": 4159.905,
+        "queue_wait_union": 0.012,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 2802.745,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1711,
+      "offset": 28,
+      "start_offset": 27,
+      "start_us": 155888214,
+      "end_us": 158559608,
+      "wall_ms": 2671.394,
+      "draws": 4685,
+      "dispatches": 5047,
+      "end_frame_captured": true,
+      "png_saves_in_interval": {
+        "frame": 1
+      },
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 2,
+      "batch_modes_intersected": {
+        "on": 43
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 43,
+      "planned_bytes_started": 21049924554,
+      "copied_bytes_started": 21049924554,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.149,
+        "texture_heaps": 508.428,
+        "deferred_buffer_batch": 1120.41,
+        "deferred_other": 274.117,
+        "submit_fence": 522.696,
+        "after_fence_checks": 0.295,
+        "writeback": 140.906,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.01,
+        "outside_recorded_submission": 104.383
+      },
+      "nested_ms": {
+        "submission_active": 2567.001,
+        "queue_wait_union": 0.01,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1120.41,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1712,
+      "offset": 29,
+      "start_offset": 28,
+      "start_us": 158559608,
+      "end_us": 162021682,
+      "wall_ms": 3462.074,
+      "draws": 3990,
+      "dispatches": 4206,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {
+        "material": 2
+      },
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 2,
+      "batch_modes_intersected": {
+        "on": 45
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 45,
+      "planned_bytes_started": 20830718804,
+      "copied_bytes_started": 20830718804,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.08,
+        "texture_heaps": 746.509,
+        "deferred_buffer_batch": 1175.174,
+        "deferred_other": 594.342,
+        "submit_fence": 318.78,
+        "after_fence_checks": 0.046,
+        "writeback": 581.908,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.014,
+        "outside_recorded_submission": 45.221
+      },
+      "nested_ms": {
+        "submission_active": 3416.839,
+        "queue_wait_union": 0.014,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1175.174,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1713,
+      "offset": 30,
+      "start_offset": 29,
+      "start_us": 162021682,
+      "end_us": 165221584,
+      "wall_ms": 3199.902,
+      "draws": 3621,
+      "dispatches": 3491,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "off",
+      "cycle": 2,
+      "batch_modes_intersected": {
+        "on": 45
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 45,
+      "planned_bytes_started": 20170285254,
+      "copied_bytes_started": 20170285254,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.114,
+        "texture_heaps": 737.647,
+        "deferred_buffer_batch": 1558.58,
+        "deferred_other": 391.031,
+        "submit_fence": 284.816,
+        "after_fence_checks": 0.042,
+        "writeback": 167.343,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.013,
+        "outside_recorded_submission": 60.316
+      },
+      "nested_ms": {
+        "submission_active": 3139.573,
+        "queue_wait_union": 0.013,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1558.58,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1714,
+      "offset": 31,
+      "start_offset": 30,
+      "start_us": 165221584,
+      "end_us": 168255013,
+      "wall_ms": 3033.429,
+      "draws": 5468,
+      "dispatches": 5924,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": 2,
+      "batch_modes_intersected": {
+        "off": 44
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 44,
+      "planned_bytes_started": 19710018084,
+      "copied_bytes_started": 19710018084,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.296,
+        "texture_heaps": 798.835,
+        "deferred_buffer_batch": 1432.398,
+        "deferred_other": 282.305,
+        "submit_fence": 313.736,
+        "after_fence_checks": 0.037,
+        "writeback": 159.058,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.013,
+        "outside_recorded_submission": 46.751
+      },
+      "nested_ms": {
+        "submission_active": 2986.665,
+        "queue_wait_union": 0.013,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1432.398,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1715,
+      "offset": 32,
+      "start_offset": 31,
+      "start_us": 168255013,
+      "end_us": 170590594,
+      "wall_ms": 2335.581,
+      "draws": 3615,
+      "dispatches": 2988,
+      "end_frame_captured": true,
+      "png_saves_in_interval": {
+        "frame": 1
+      },
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": 2,
+      "batch_modes_intersected": {
+        "off": 43
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 43,
+      "planned_bytes_started": 21268372246,
+      "copied_bytes_started": 21268372246,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.149,
+        "texture_heaps": 466.657,
+        "deferred_buffer_batch": 861.714,
+        "deferred_other": 248.915,
+        "submit_fence": 453.775,
+        "after_fence_checks": 0.04,
+        "writeback": 153.091,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.013,
+        "outside_recorded_submission": 151.227
+      },
+      "nested_ms": {
+        "submission_active": 2184.341,
+        "queue_wait_union": 0.013,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 861.714,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1716,
+      "offset": 33,
+      "start_offset": 32,
+      "start_us": 170590594,
+      "end_us": 173954722,
+      "wall_ms": 3364.128,
+      "draws": 4011,
+      "dispatches": 3896,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {
+        "material": 2
+      },
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "off",
+      "cycle": 3,
+      "batch_modes_intersected": {
+        "off": 43
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 43,
+      "planned_bytes_started": 22150792086,
+      "copied_bytes_started": 22150792086,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.086,
+        "texture_heaps": 772.392,
+        "deferred_buffer_batch": 1233.891,
+        "deferred_other": 445.158,
+        "submit_fence": 400.746,
+        "after_fence_checks": 0.049,
+        "writeback": 473.282,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.013,
+        "outside_recorded_submission": 38.511
+      },
+      "nested_ms": {
+        "submission_active": 3325.604,
+        "queue_wait_union": 0.013,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1233.891,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1717,
+      "offset": 34,
+      "start_offset": 33,
+      "start_us": 173954722,
+      "end_us": 176788053,
+      "wall_ms": 2833.331,
+      "draws": 3826,
+      "dispatches": 4490,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "off",
+      "planned_start": "off",
+      "planned_end": "on",
+      "cycle": 3,
+      "batch_modes_intersected": {
+        "off": 44
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 44,
+      "planned_bytes_started": 21523612972,
+      "copied_bytes_started": 21523612972,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.172,
+        "texture_heaps": 1135.902,
+        "deferred_buffer_batch": 770.101,
+        "deferred_other": 334.944,
+        "submit_fence": 406.896,
+        "after_fence_checks": 0.041,
+        "writeback": 153.848,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.013,
+        "outside_recorded_submission": 31.414
+      },
+      "nested_ms": {
+        "submission_active": 2801.904,
+        "queue_wait_union": 0.013,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 770.101,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1718,
+      "offset": 35,
+      "start_offset": 34,
+      "start_us": 176788053,
+      "end_us": 180054690,
+      "wall_ms": 3266.637,
+      "draws": 2264,
+      "dispatches": 6064,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 3,
+      "batch_modes_intersected": {
+        "on": 46
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 46,
+      "planned_bytes_started": 21950539866,
+      "copied_bytes_started": 21950539866,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.17,
+        "texture_heaps": 1021.418,
+        "deferred_buffer_batch": 1375.186,
+        "deferred_other": 399.345,
+        "submit_fence": 260.056,
+        "after_fence_checks": 0.044,
+        "writeback": 161.569,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.012,
+        "outside_recorded_submission": 48.837
+      },
+      "nested_ms": {
+        "submission_active": 3217.788,
+        "queue_wait_union": 0.012,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1375.186,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1719,
+      "offset": 36,
+      "start_offset": 35,
+      "start_us": 180054690,
+      "end_us": 183082125,
+      "wall_ms": 3027.435,
+      "draws": 6930,
+      "dispatches": 7808,
+      "end_frame_captured": true,
+      "png_saves_in_interval": {
+        "frame": 1
+      },
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 3,
+      "batch_modes_intersected": {
+        "on": 45
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 45,
+      "planned_bytes_started": 21224279238,
+      "copied_bytes_started": 21224279238,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.176,
+        "texture_heaps": 769.345,
+        "deferred_buffer_batch": 1400.299,
+        "deferred_other": 348.372,
+        "submit_fence": 206.599,
+        "after_fence_checks": 0.045,
+        "writeback": 165.589,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.011,
+        "outside_recorded_submission": 136.999
+      },
+      "nested_ms": {
+        "submission_active": 2890.425,
+        "queue_wait_union": 0.011,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1400.299,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1720,
+      "offset": 37,
+      "start_offset": 36,
+      "start_us": 183082125,
+      "end_us": 186354609,
+      "wall_ms": 3272.484,
+      "draws": 5236,
+      "dispatches": 4664,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {
+        "material": 2
+      },
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "on",
+      "cycle": 3,
+      "batch_modes_intersected": {
+        "on": 44
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 44,
+      "planned_bytes_started": 21610039816,
+      "copied_bytes_started": 21610039816,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.162,
+        "texture_heaps": 457.042,
+        "deferred_buffer_batch": 825.035,
+        "deferred_other": 362.311,
+        "submit_fence": 543.185,
+        "after_fence_checks": 0.047,
+        "writeback": 1055.166,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.01,
+        "outside_recorded_submission": 29.526
+      },
+      "nested_ms": {
+        "submission_active": 3242.948,
+        "queue_wait_union": 0.01,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 825.035,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    },
+    {
+      "frame": 1721,
+      "offset": 38,
+      "start_offset": 37,
+      "start_us": 186354609,
+      "end_us": 190054728,
+      "wall_ms": 3700.119,
+      "draws": 5139,
+      "dispatches": 5487,
+      "end_frame_captured": false,
+      "png_saves_in_interval": {},
+      "mode": "on",
+      "planned_start": "on",
+      "planned_end": "off",
+      "cycle": 3,
+      "batch_modes_intersected": {
+        "on": 42
+      },
+      "hot_modes_intersected": {},
+      "batch_calls_started": 42,
+      "planned_bytes_started": 20729290956,
+      "copied_bytes_started": 20729290956,
+      "fence_calls_started": 0,
+      "fence_calls_without_wait_started": 0,
+      "snapshot_calls_started": 0,
+      "snapshot_declarations_started": 0,
+      "snapshot_modes_intersected": {},
+      "snapshot_applied_mode": "no_declarations",
+      "hot_attempts_started": 0,
+      "hot_successes_started": 0,
+      "hot_stored_bytes_started": 0,
+      "hot_requested_bytes_started": 0,
+      "hot_calls_started": 0,
+      "hot_worker_ms": 0.0,
+      "exclusive_ms": {
+        "descriptors": 0.27,
+        "texture_heaps": 1247.825,
+        "deferred_buffer_batch": 1451.664,
+        "deferred_other": 347.603,
+        "submit_fence": 455.244,
+        "after_fence_checks": 0.049,
+        "writeback": 157.487,
+        "multiple_submission_stages": 0.0,
+        "queue_wait_only": 0.012,
+        "outside_recorded_submission": 39.965
+      },
+      "nested_ms": {
+        "submission_active": 3660.142,
+        "queue_wait_union": 0.012,
+        "queue_wait_while_active": 0.0,
+        "buffer_batch_union": 1451.664,
+        "buffer_outside_deferred": 0.0,
+        "hot_copy_union": 0.0,
+        "fence_execute_call": 0.0,
+        "fence_signal_call": 0.0,
+        "fence_arm_event_call": 0.0,
+        "fence_wait_return": 0.0,
+        "fence_without_wait_return": 0.0,
+        "snapshot_union": 0.0,
+        "snapshot_with_declarations": 0.0
+      }
+    }
+  ],
+  "log": "GTA-VI-launch-test/logs/victory-run-picture-20261125-081514-xdg0lmbw.log"
+}

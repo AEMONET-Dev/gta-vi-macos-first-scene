@@ -1,0 +1,46 @@
+diff --git a/crates/victory-gpu/src/pipeline/library.rs b/crates/victory-gpu/src/pipeline/library.rs
+index 2316003..a32f3a7 100644
+--- a/crates/victory-gpu/src/pipeline/library.rs
++++ b/crates/victory-gpu/src/pipeline/library.rs
+@@ -213,14 +213,12 @@ fn open(device: &ID3D12Device1, blob: Vec<u8>) -> Option<Library> {
+ /// names its pipelines (the translation, as the shader cache keys it; the
+ /// host descriptions).
+ fn tag(blob: &[u8]) -> String {
+-    let limit = victory_shader::emit::loop_limit().to_le_bytes();
+-    let translator = victory_shader::SOURCE_HASH.as_bytes();
++    use crate::shader_cache;
++    let translator = shader_cache::fingerprint(shader_cache::atomic_locks());
+     let mut h = blake3::Hasher::new();
+     for part in [
+         blob,
+         translator,
+-        include_bytes!("../shader_cache.rs"),
+-        &limit,
+         include_bytes!("host.rs"),
+         include_bytes!("library.rs"),
+     ] {
+diff --git a/crates/victory-gpu/src/shader_cache.rs b/crates/victory-gpu/src/shader_cache.rs
+index e354910..0c0d68f 100644
+--- a/crates/victory-gpu/src/shader_cache.rs
++++ b/crates/victory-gpu/src/shader_cache.rs
+@@ -85,13 +85,19 @@ fn key(translator: &str, encoding: &[u8], limit: u32) -> [u8; 32] {
+     if victory_shader::emit::spd_wave32_enabled() {
+         h.update(b"SPD wave32 R32_UINT reset");
+     }
++    if victory_shader::emit::force_wave32_enabled() {
++        h.update(b"force wave32 compute");
++    }
++    if victory_shader::emit::pack_mesh_outputs_enabled() {
++        h.update(b"pack generic shader signature rows");
++    }
+     *h.finalize().as_bytes()
+ }
+ 
+ /// Whether translations put 64-bit image atomics under locks: under Wine,
+ /// whose D3DMetal claims the atomics and leaves the texels untouched.
+ /// `VICTORY_ATOMIC_LOCKS=0` or `1` overrides.
+-fn atomic_locks() -> bool {
++pub(super) fn atomic_locks() -> bool {
+     static LOCKS: OnceLock<bool> = OnceLock::new();
+     *LOCKS.get_or_init(|| match std::env::var("VICTORY_ATOMIC_LOCKS").as_deref() {
+         Ok("0") => false,

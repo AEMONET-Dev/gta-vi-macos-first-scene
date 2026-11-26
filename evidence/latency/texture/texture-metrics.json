@@ -1,0 +1,470 @@
+{
+  "restored": {
+    "file": "victory-run-picture-20261125-075504-sj_1521j.log",
+    "world_frame": 2519,
+    "samples": 18,
+    "host_meter_medians": {
+      "fps": 0.4,
+      "frame_ms": 2782.0,
+      "prepare_ms": 2235.5,
+      "buffer_copy_ms": 2004.65,
+      "buffer_copy_MB": 18089.85,
+      "texture_ms": 396.0,
+      "texture_MB": 8052.9,
+      "queue_wait_ms": 380.15,
+      "writeback_ms": 146.85,
+      "draws": 4002.0
+    },
+    "texture_stat_samples": 18,
+    "texture_stat_medians": {
+      "watched_changed_MB": 0.0,
+      "checked_MB": 7816.05,
+      "changed_MB": 12.35
+    },
+    "one_heap_upload_wall_ms_median_per_meter": 331.95,
+    "highest_logged_recovery_index": 128,
+    "sampled_recoveries": [
+      {
+        "first": 1,
+        "resident": 360448,
+        "requested": 1409024,
+        "nth": 0
+      },
+      {
+        "first": 2,
+        "resident": 180224,
+        "requested": 2801664,
+        "nth": 1
+      },
+      {
+        "first": 3,
+        "resident": 49152,
+        "requested": 2801664,
+        "nth": 2
+      },
+      {
+        "first": 2,
+        "resident": 180224,
+        "requested": 2801664,
+        "nth": 3
+      },
+      {
+        "first": 1,
+        "resident": 49152,
+        "requested": 180224,
+        "nth": 4
+      },
+      {
+        "first": 2,
+        "resident": 45056,
+        "requested": 700416,
+        "nth": 5
+      },
+      {
+        "first": 2,
+        "resident": 45056,
+        "requested": 700416,
+        "nth": 6
+      },
+      {
+        "first": 2,
+        "resident": 180224,
+        "requested": 2801664,
+        "nth": 7
+      },
+      {
+        "first": 1,
+        "resident": 49152,
+        "requested": 180224,
+        "nth": 8
+      },
+      {
+        "first": 2,
+        "resident": 180224,
+        "requested": 2801664,
+        "nth": 9
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 393216,
+        "nth": 11
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 393216,
+        "nth": 10
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 131072,
+        "nth": 16
+      },
+      {
+        "first": 1,
+        "resident": 176128,
+        "requested": 700416,
+        "nth": 32
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 131072,
+        "nth": 64
+      },
+      {
+        "first": 2,
+        "resident": 131072,
+        "requested": 1441792,
+        "nth": 128
+      }
+    ]
+  },
+  "cleaned": {
+    "file": "victory-run-picture-20261125-080223-7344ubsc.log",
+    "world_frame": 1573,
+    "samples": 23,
+    "host_meter_medians": {
+      "fps": 0.4,
+      "frame_ms": 2771.9,
+      "prepare_ms": 2127.4,
+      "buffer_copy_ms": 1416.4,
+      "buffer_copy_MB": 18783.3,
+      "texture_ms": 462.4,
+      "texture_MB": 8657.3,
+      "queue_wait_ms": 412.9,
+      "writeback_ms": 153.2,
+      "draws": 3305.0
+    },
+    "texture_stat_samples": 23,
+    "texture_stat_medians": {
+      "watched_changed_MB": 0.0,
+      "checked_MB": 7803.4,
+      "changed_MB": 18.7
+    },
+    "one_heap_upload_wall_ms_median_per_meter": 592.8,
+    "highest_logged_recovery_index": 512,
+    "sampled_recoveries": [
+      {
+        "first": 1,
+        "resident": 360448,
+        "requested": 1409024,
+        "nth": 6
+      },
+      {
+        "first": 3,
+        "resident": 49152,
+        "requested": 2801664,
+        "nth": 7
+      },
+      {
+        "first": 3,
+        "resident": 49152,
+        "requested": 2801664,
+        "nth": 8
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 393216,
+        "nth": 9
+      },
+      {
+        "first": 3,
+        "resident": 49152,
+        "requested": 2801664,
+        "nth": 10
+      },
+      {
+        "first": 1,
+        "resident": 176128,
+        "requested": 700416,
+        "nth": 11
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 393216,
+        "nth": 16
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 720896,
+        "nth": 32
+      },
+      {
+        "first": 2,
+        "resident": 131072,
+        "requested": 393216,
+        "nth": 64
+      },
+      {
+        "first": 1,
+        "resident": 180224,
+        "requested": 704512,
+        "nth": 128
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 393216,
+        "nth": 256
+      },
+      {
+        "first": 1,
+        "resident": 176128,
+        "requested": 700416,
+        "nth": 512
+      }
+    ]
+  },
+  "release": {
+    "file": "victory-run-picture-20261125-080612-kz1g1gwi.log",
+    "world_frame": 1609,
+    "samples": 21,
+    "host_meter_medians": {
+      "fps": 0.4,
+      "frame_ms": 2351.9,
+      "prepare_ms": 1690.3,
+      "buffer_copy_ms": 1261.9,
+      "buffer_copy_MB": 18310.2,
+      "texture_ms": 461.2,
+      "texture_MB": 8263.6,
+      "queue_wait_ms": 364.9,
+      "writeback_ms": 143.7,
+      "draws": 3519.0
+    },
+    "texture_stat_samples": 21,
+    "texture_stat_medians": {
+      "watched_changed_MB": 0.0,
+      "checked_MB": 7562.6,
+      "changed_MB": 20.2
+    },
+    "one_heap_upload_wall_ms_median_per_meter": 474.1,
+    "highest_logged_recovery_index": 256,
+    "sampled_recoveries": [
+      {
+        "first": 3,
+        "resident": 49152,
+        "requested": 2801664,
+        "nth": 0
+      },
+      {
+        "first": 3,
+        "resident": 8192,
+        "requested": 180224,
+        "nth": 1
+      },
+      {
+        "first": 1,
+        "resident": 176128,
+        "requested": 700416,
+        "nth": 2
+      },
+      {
+        "first": 3,
+        "resident": 8192,
+        "requested": 180224,
+        "nth": 3
+      },
+      {
+        "first": 1,
+        "resident": 176128,
+        "requested": 700416,
+        "nth": 4
+      },
+      {
+        "first": 3,
+        "resident": 49152,
+        "requested": 2801664,
+        "nth": 5
+      },
+      {
+        "first": 3,
+        "resident": 24576,
+        "requested": 1400832,
+        "nth": 6
+      },
+      {
+        "first": 1,
+        "resident": 32768,
+        "requested": 98304,
+        "nth": 7
+      },
+      {
+        "first": 3,
+        "resident": 49152,
+        "requested": 2801664,
+        "nth": 8
+      },
+      {
+        "first": 3,
+        "resident": 24576,
+        "requested": 1400832,
+        "nth": 9
+      },
+      {
+        "first": 1,
+        "resident": 32768,
+        "requested": 98304,
+        "nth": 10
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 393216,
+        "nth": 11
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 131072,
+        "nth": 16
+      },
+      {
+        "first": 2,
+        "resident": 131072,
+        "requested": 1441792,
+        "nth": 32
+      },
+      {
+        "first": 2,
+        "resident": 131072,
+        "requested": 393216,
+        "nth": 64
+      },
+      {
+        "first": 3,
+        "resident": 131072,
+        "requested": 393216,
+        "nth": 128
+      },
+      {
+        "first": 1,
+        "resident": 90112,
+        "requested": 352256,
+        "nth": 256
+      }
+    ]
+  },
+  "texture_candidate": {
+    "file": "victory-run-picture-20261125-080944-szt6mm4z.log",
+    "world_frame": 1726,
+    "samples": 22,
+    "host_meter_medians": {
+      "fps": 0.3,
+      "frame_ms": 2962.75,
+      "prepare_ms": 2366.35,
+      "buffer_copy_ms": 2262.9,
+      "buffer_copy_MB": 18941.1,
+      "texture_ms": 355.2,
+      "texture_MB": 8391.7,
+      "queue_wait_ms": 360.6,
+      "writeback_ms": 142.45,
+      "draws": 3221.0
+    },
+    "texture_stat_samples": 22,
+    "texture_stat_medians": {
+      "watched_changed_MB": 0.0,
+      "checked_MB": 7660.2,
+      "changed_MB": 13.4
+    },
+    "one_heap_upload_wall_ms_median_per_meter": 388.1,
+    "highest_logged_recovery_index": 256,
+    "sampled_recoveries": [
+      {
+        "first": 2,
+        "resident": 180224,
+        "requested": 2801664,
+        "nth": 2
+      },
+      {
+        "first": 2,
+        "resident": 90112,
+        "requested": 1400832,
+        "nth": 3
+      },
+      {
+        "first": 2,
+        "resident": 180224,
+        "requested": 2801664,
+        "nth": 4
+      },
+      {
+        "first": 2,
+        "resident": 90112,
+        "requested": 1400832,
+        "nth": 5
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 393216,
+        "nth": 6
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 131072,
+        "nth": 7
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 393216,
+        "nth": 8
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 393216,
+        "nth": 9
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 131072,
+        "nth": 10
+      },
+      {
+        "first": 2,
+        "resident": 131072,
+        "requested": 393216,
+        "nth": 11
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 131072,
+        "nth": 16
+      },
+      {
+        "first": 3,
+        "resident": 65536,
+        "requested": 393216,
+        "nth": 32
+      },
+      {
+        "first": 1,
+        "resident": 90112,
+        "requested": 352256,
+        "nth": 64
+      },
+      {
+        "first": 1,
+        "resident": 176128,
+        "requested": 700416,
+        "nth": 128
+      },
+      {
+        "first": 2,
+        "resident": 131072,
+        "requested": 393216,
+        "nth": 256
+      }
+    ]
+  }
+}
