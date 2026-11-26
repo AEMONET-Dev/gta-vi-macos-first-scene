@@ -5,6 +5,7 @@
 //! overlap them with per-submission fences once more than clears run.
 
 mod refresh;
+pub(crate) mod refresh_timing;
 mod sparse;
 pub(crate) mod upload_jobs;
 
@@ -2078,14 +2079,40 @@ impl Batch {
             limit.min(self.uploads.len()).min((bytes / (8 << 20)).max(1))
         };
         let started = Instant::now();
-        let copied = upload_jobs::run(&self.uploads, workers, |(shadow, from, to)| {
-            #[cfg(feature = "diagnostics")]
-            let start = Instant::now();
-            let count = shadow.update(*from, to - from);
-            #[cfg(feature = "diagnostics")]
-            crate::copystat::range(*from, to - from, start.elapsed().as_micros() as u64, 0);
-            count
-        });
+        // Opt-in (`VICTORY_REFRESH_TIMING=1`): what the worker this batch
+        // waits for spent its time on.
+        let timing = refresh_timing::batch();
+        let timing_ref = timing.as_ref();
+        let job = |(shadow, from, to): &(std::sync::Arc<crate::shadow::Shadow>, usize, usize)| {
+            let run = || {
+                #[cfg(feature = "diagnostics")]
+                let start = Instant::now();
+                let count = shadow.update(*from, to - from);
+                #[cfg(feature = "diagnostics")]
+                crate::copystat::range(*from, to - from, start.elapsed().as_micros() as u64, 0);
+                count
+            };
+            match timing_ref {
+                Some(t) => t.job(run),
+                None => run(),
+            }
+        };
+        // Experiment (`VICTORY_TRACK_ONLY_LEN`): the one guard-tracked copy
+        // changes page protection, so its uploads run in order on one
+        // worker first; the untracked rest keep their parallel workers.
+        let copied = if crate::watch::scoped_len().is_some() && !crate::watch::fault_tracking() {
+            let (tracked, free): (Vec<_>, Vec<_>) = self.uploads.drain(..).partition(|(s, _, _)| s.is_tracked());
+            let workers = workers.min(free.len()).max(1);
+            let copied = upload_jobs::run(&tracked, 1, job) + upload_jobs::run(&free, workers, job);
+            self.uploads = tracked;
+            self.uploads.extend(free);
+            copied
+        } else {
+            upload_jobs::run(&self.uploads, workers, job)
+        };
+        if let Some(t) = timing {
+            t.finish(workers, bytes);
+        }
         PREPARING[0].fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
         PREPARING[1].fetch_add(copied as u64, Ordering::Relaxed);
         // Do not retain a separate strong reference after the title changes
@@ -2133,7 +2160,9 @@ pub(crate) fn copy_mapped(dst: *mut u8, src: *const u8, len: usize, title_dst: b
 fn first_read(src: *const u8, dst: *mut u8, len: usize) -> bool {
     #[cfg(feature = "diagnostics")]
     let moved = std::time::Instant::now();
+    let probe = refresh_timing::start();
     let whole = read(src, dst, len);
+    probe.done(if whole { refresh_timing::Kind::FirstOk } else { refresh_timing::Kind::FirstFailed }, len);
     #[cfg(feature = "diagnostics")]
     crate::copystat::add(crate::copystat::C::MoveUs, moved.elapsed().as_micros() as u64);
     whole
@@ -2172,15 +2201,26 @@ fn copy_regions(
         if !readable {
             hole(at, next);
             zero_unreadable(to, next - at, title_dst);
-        } else if !read(at as *const u8, to, next - at) {
+        } else if !{
+            let probe = refresh_timing::start();
+            let ok = read(at as *const u8, to, next - at);
+            probe.done(refresh_timing::Kind::Retry, next - at);
+            ok
+        } {
             // A mapping changed, or the query failed. Salvage readable
             // pieces without trusting the protection returned by the query.
+            let timed_read = |from: usize, out: *mut u8, n: usize| {
+                let probe = refresh_timing::start();
+                let ok = read(from as *const u8, out, n);
+                probe.done(refresh_timing::Kind::Retry, n);
+                ok
+            };
             for_pieces(at, next - at, 64 << 10, |chunk, size| {
                 let out = dst.wrapping_add(chunk - start);
-                if !read(chunk as *const u8, out, size) {
+                if !timed_read(chunk, out, size) {
                     for_pieces(chunk, size, 4 << 10, |page, count| {
                         let out = dst.wrapping_add(page - start);
-                        if !read(page as *const u8, out, count) {
+                        if !timed_read(page, out, count) {
                             zero_unreadable(out, count, title_dst);
                         }
                     });
@@ -2200,7 +2240,10 @@ fn source_region(at: usize, end: usize) -> (usize, bool) {
     let page_end = (at | 0xfff).saturating_add(1).min(end);
     // SAFETY: a valid out pointer of the right size, filled by VirtualQuery.
     let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
-    if unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) } == 0 {
+    let probe = refresh_timing::start();
+    let queried = unsafe { VirtualQuery(at as *const _, &mut info, size_of_val(&info)) };
+    probe.done(refresh_timing::Kind::Query, 0);
+    if queried == 0 {
         return (page_end, true);
     }
     let limit = (info.BaseAddress as usize).saturating_add(info.RegionSize);
@@ -2218,6 +2261,12 @@ fn source_region(at: usize, end: usize) -> (usize, bool) {
 fn zero_unreadable(dst: *mut u8, len: usize, title_dst: bool) {
     #[cfg(feature = "diagnostics")]
     crate::copystat::add(crate::copystat::C::Unmapped, len as u64);
+    let probe = refresh_timing::start();
+    zero_unreadable_untimed(dst, len, title_dst);
+    probe.done(refresh_timing::Kind::Zero, len);
+}
+
+fn zero_unreadable_untimed(dst: *mut u8, len: usize, title_dst: bool) {
     if title_dst {
         static ZEROS: [u8; 64 << 10] = [0; 64 << 10];
         let mut offset = 0;

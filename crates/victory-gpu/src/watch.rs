@@ -61,6 +61,18 @@ pub fn fault_tracking() -> bool {
     *ON
 }
 
+/// Experiment (`VICTORY_TRACK_ONLY_LEN=<bytes>`): with `fault_tracking`
+/// off, guard-track only host copies of exactly this many bytes (the
+/// title's 174 MiB buffer), so one hot copy stops being taken whole while
+/// everything else stays as it is. Needs the masked stores patched
+/// (`VICTORY_PATCH_MASKED`) under Rosetta.
+pub fn scoped_len() -> Option<usize> {
+    static LEN: LazyLock<Option<usize>> = LazyLock::new(|| {
+        std::env::var("VICTORY_TRACK_ONLY_LEN").ok().and_then(|v| v.trim().parse().ok())
+    });
+    *LEN
+}
+
 /// `fault_tracking` from the variable's value and the default.
 fn decide(var: Option<&str>, default: bool) -> bool {
     match var {
@@ -264,8 +276,15 @@ fn guard_aliases(g: &mut Guards, pairs: &[(usize, usize)]) {
 /// streamed textures and video planes through a pool view and maps the
 /// pages into its tiled heap, where a guard sees none of it).
 pub(crate) fn track(start: usize, len: usize, views: bool) -> Option<Tracked> {
-    if len == 0 || !fault_tracking() || !runtime_memory(start, views) {
+    let scoped = !fault_tracking() && scoped_len() == Some(len);
+    if len == 0 || !(fault_tracking() || scoped) || !runtime_memory(start, views) {
+        if scoped {
+            tracing::warn!(start = format_args!("{start:#x}"), len, "scoped write tracking: not runtime memory, copied whole");
+        }
         return None;
+    }
+    if scoped {
+        tracing::info!(start = format_args!("{start:#x}"), len, "scoped write tracking on for this host copy");
     }
     install();
     let end = start + len;
@@ -549,10 +568,64 @@ fn changed_here(g: &mut Guards, first: usize, last: usize, save: bool) -> bool {
     !guarded.is_empty()
 }
 
+/// What the missed-write audit (`crate::shadow`, `VICTORY_TRACK_AUDIT`)
+/// found for one page.
+pub(crate) enum Audit {
+    /// Unchanged by the tracker's account, and the copy matches.
+    Same,
+    /// Differed, but a write marked the page during the compare.
+    Raced,
+    /// Differed while the tracker still called it unchanged: a missed
+    /// write (this many 32-bit words differ).
+    Missed(usize),
+    /// Under a range shaders may be writing: not compared.
+    Skipped,
+    /// Title memory could not be read there.
+    Unreadable,
+}
+
+static AUDIT: [std::sync::atomic::AtomicU64; 6] = [const { std::sync::atomic::AtomicU64::new(0) }; 6];
+
+pub(crate) fn audit_note(what: Audit, at: usize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let k = match what {
+        Audit::Same => 0,
+        Audit::Raced => 1,
+        Audit::Missed(words) => {
+            AUDIT[5].fetch_add(words as u64, Relaxed);
+            if AUDIT[2].load(Relaxed) < 50 {
+                let others: Vec<String> = guards()
+                    .alias_of
+                    .get(&(at / PAGE))
+                    .map(|o| o.iter().map(|p| format!("{:#x}", p * PAGE)).collect())
+                    .unwrap_or_default();
+                tracing::error!(page = format_args!("{at:#x}"), words, aliases = ?others, "track audit: MISSED WRITE");
+            }
+            2
+        }
+        Audit::Skipped => 3,
+        Audit::Unreadable => 4,
+    };
+    AUDIT[k].fetch_add(1, Relaxed);
+}
+
+/// The audit's running totals, once per presented frame when it ran.
+fn audit_report() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let n: Vec<u64> = AUDIT.iter().map(|a| a.load(Relaxed)).collect();
+    if n[..5].iter().any(|&x| x > 0) {
+        tracing::info!(
+            same = n[0], raced = n[1], missed = n[2], missed_words = n[5], skipped = n[3], unreadable = n[4],
+            "track audit totals (64 KiB pages)"
+        );
+    }
+}
+
 /// At each presented frame (diagnostics): counts the tracked pages written
 /// in it, and those written the frame before too.
 #[cfg(feature = "diagnostics")]
 pub(crate) fn frame_done() {
+    audit_report();
     let mut g = guards();
     let written = std::mem::take(&mut g.written);
     let again = written.intersection(&g.written_before).count();

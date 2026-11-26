@@ -85,13 +85,19 @@ fn key(translator: &str, encoding: &[u8], limit: u32) -> [u8; 32] {
     if victory_shader::emit::spd_wave32_enabled() {
         h.update(b"SPD wave32 R32_UINT reset");
     }
+    if victory_shader::emit::force_wave32_enabled() {
+        h.update(b"force wave32 compute");
+    }
+    if victory_shader::emit::pack_mesh_outputs_enabled() {
+        h.update(b"pack generic shader signature rows");
+    }
     *h.finalize().as_bytes()
 }
 
 /// Whether translations put 64-bit image atomics under locks: under Wine,
 /// whose D3DMetal claims the atomics and leaves the texels untouched.
 /// `VICTORY_ATOMIC_LOCKS=0` or `1` overrides.
-fn atomic_locks() -> bool {
+pub(super) fn atomic_locks() -> bool {
     static LOCKS: OnceLock<bool> = OnceLock::new();
     *LOCKS.get_or_init(|| match std::env::var("VICTORY_ATOMIC_LOCKS").as_deref() {
         Ok("0") => false,

@@ -518,9 +518,75 @@ impl Shadow {
             if at < to {
                 bytes += self.update_free(at, to);
             }
+            self.audit(from, to);
             return bytes;
         }
-        self.update_free(from, to)
+        let bytes = self.update_free(from, to);
+        self.audit(from, to);
+        bytes
+    }
+
+    /// Whether this copy is guard-tracked (not taken whole each time).
+    pub(crate) fn is_tracked(&self) -> bool {
+        self.tracked.is_some()
+    }
+
+    /// Missed-write audit (`VICTORY_TRACK_AUDIT=1`, tracked copies only):
+    /// right after `[from, to)` was brought up to date, every whole page
+    /// there that the tracker calls unchanged must hold in the copy exactly
+    /// the bytes title memory holds. A difference on a page the tracker
+    /// still calls unchanged after the compare is a write it missed; one on
+    /// a page it marked meanwhile is a write racing the compare (it will be
+    /// taken next time). Pages under ranges shaders may be writing are
+    /// left out: the copy may hold the GPU's bytes there by design.
+    fn audit(&self, from: usize, to: usize) {
+        let Some(t) = &self.tracked else { return };
+        if !crate::switch::on("VICTORY_TRACK_AUDIT") {
+            return;
+        }
+        let pending: Vec<(usize, usize)> = self
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .copied()
+            .collect();
+        let start = self.start as usize;
+        let end = (self.start + self.len) as usize;
+        let mut title = vec![0u8; PAGE];
+        let mut page = from.div_ceil(PAGE);
+        while (page + 1) * PAGE <= to {
+            let (a, b) = (page * PAGE, (page + 1) * PAGE);
+            page += 1;
+            if a < start || b > end {
+                continue;
+            }
+            if pending.iter().any(|&(s, e)| s < b && e > a) {
+                crate::watch::audit_note(crate::watch::Audit::Skipped, a);
+                continue;
+            }
+            if t.changed(a / PAGE) {
+                continue;
+            }
+            if !crate::host::read_into(a as *const u8, &mut title) {
+                crate::watch::audit_note(crate::watch::Audit::Unreadable, a);
+                continue;
+            }
+            // SAFETY: `[a, b)` lies inside the buffer, so inside the mapping.
+            let host = unsafe { std::slice::from_raw_parts(self.data.add(a - start), PAGE) };
+            if host == &title[..] {
+                crate::watch::audit_note(crate::watch::Audit::Same, a);
+            } else if t.changed(a / PAGE) {
+                crate::watch::audit_note(crate::watch::Audit::Raced, a);
+            } else {
+                let words = host
+                    .chunks_exact(4)
+                    .zip(title.chunks_exact(4))
+                    .filter(|(x, y)| x != y)
+                    .count();
+                crate::watch::audit_note(crate::watch::Audit::Missed(words), a);
+            }
+        }
     }
 
     /// [`Shadow::update`] of `[from, to)` where a list submitted earlier
